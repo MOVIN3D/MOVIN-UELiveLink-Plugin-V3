@@ -54,9 +54,23 @@ After the build completes, reopen the project in Unreal Editor.
 
 You can also use the plugin in a **Blueprint-only project** with a prebuilt plugin package.
 
-Prebuilt plugin packages for supported Unreal Engine versions will be uploaded to this repository's GitHub Releases in a future update.
+Download the zip package that matches your Unreal Engine version from the [prebuilt release](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/prebuilt):
 
-Until prebuilt packages are available, first follow **Option 1** in a C++ Unreal project using the same Unreal Engine version and platform. Once the plugin has been built successfully, copy the built `MOVINLiveLink` plugin folder into the Blueprint-only project's `Plugins/` folder.
+| Unreal Engine version | Package |
+| --------------------- | ------- |
+| 5.3 | [`UE5.3.zip`](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/download/prebuilt/UE5.3.zip) |
+| 5.4 | [`UE5.4.zip`](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/download/prebuilt/UE5.4.zip) |
+| 5.5 | [`UE5.5.zip`](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/download/prebuilt/UE5.5.zip) |
+| 5.6 | [`UE5.6.zip`](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/download/prebuilt/UE5.6.zip) |
+| 5.7 | [`UE5.7.zip`](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/download/prebuilt/UE5.7.zip) |
+| 5.8 | [`UE5.8.zip`](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/download/prebuilt/UE5.8.zip) |
+
+To install a prebuilt package:
+
+1. Download the zip for your Unreal Engine version
+2. Extract the zip
+3. Copy the extracted `MOVINLiveLinkPlugin` folder, which contains `MOVINLiveLink.uplugin`, into your project's `Plugins/` folder
+4. Reopen the project in Unreal Editor and enable **MOVINLiveLink** if prompted
 
 ## Quick Start (Editor)
 
