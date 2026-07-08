@@ -56,15 +56,6 @@ You can also use the plugin in a **Blueprint-only project** with a prebuilt plug
 
 Download the zip package that matches your Unreal Engine version from the [prebuilt release](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/prebuilt):
 
-| Unreal Engine version | Package |
-| --------------------- | ------- |
-| 5.3 | [`UE5.3.zip`](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/download/prebuilt/UE5.3.zip) |
-| 5.4 | [`UE5.4.zip`](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/download/prebuilt/UE5.4.zip) |
-| 5.5 | [`UE5.5.zip`](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/download/prebuilt/UE5.5.zip) |
-| 5.6 | [`UE5.6.zip`](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/download/prebuilt/UE5.6.zip) |
-| 5.7 | [`UE5.7.zip`](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/download/prebuilt/UE5.7.zip) |
-| 5.8 | [`UE5.8.zip`](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/download/prebuilt/UE5.8.zip) |
-
 To install a prebuilt package:
 
 1. Download the zip for your Unreal Engine version
