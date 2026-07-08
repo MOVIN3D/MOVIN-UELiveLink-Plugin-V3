@@ -54,7 +54,7 @@ After the build completes, reopen the project in Unreal Editor.
 
 You can also use the plugin in a **Blueprint-only project** with a prebuilt plugin package.
 
-Download the zip package that matches your Unreal Engine version from the [prebuilt release](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/prebuilt):
+Download the zip package that matches your Unreal Engine version from the [prebuilt release](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/prebuilt).
 
 To install a prebuilt package:
 
