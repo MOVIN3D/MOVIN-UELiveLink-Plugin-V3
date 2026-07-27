@@ -1,4 +1,4 @@
-# MOVIN LiveLink Plugin V3 for UE5 (for MOVIN Studio v3.0.0+)
+# MOVIN LiveLink Plugin V3 (MOVIN Studio v3.0.0+) for UE5 
 
 Receives real-time motion capture data from MOVIN Studio via UDP and feeds it into Unreal Engine's [LiveLink](https://dev.epicgames.com/documentation/en-us/unreal-engine/live-link-in-unreal-engine) system.
 
