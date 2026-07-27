@@ -77,11 +77,64 @@ To drive a Skeletal Mesh character with LiveLink data:
 
 1. **Create an Animation Blueprint** for your character's Skeleton
 2. In the **AnimGraph**, add a **Live Link Pose** node
-3. If MOVIN Studio is streaming an **Actor**, receive it in Unreal using the `MOVINman_V3.fbx` model
+3. If MOVIN Studio is streaming an **Actor**, receive it in Unreal using the `MOVINman_V3_Puppet_UE.fbx` model
 4. If MOVIN Studio is streaming a **character model**, the model imported into Unreal must be the exact same `.fbx` used in MOVIN Studio
 5. In the **Live Link Pose** node, select the subject that corresponds to the character you want to drive
 6. Connect the Live Link Pose output to the **Output Pose**
 7. Assign the Animation Blueprint to your Skeletal Mesh Actor
+
+## Skeleton Calibration Offset
+
+**When streaming an Actor, expect the mesh to deform. This is correct behaviour, not a defect.**
+
+MOVIN Studio calibrates the skeleton to each performer's body, so an Actor stream carries bone
+lengths that belong to the performer rather than to the `MOVINman_V3_Puppet_UE` mesh. Those lengths
+are applied verbatim, which is what keeps the motion data intact - but it means joints whose
+calibrated length differs from the mesh visibly change shape. A shortened upper arm, for example,
+pulls the forearm up into it and the elbow appears to bulge.
+
+The plugin detects this and raises an editor notification with the actual per-bone figures:
+
+```
+Skeleton Calibration Offset - 'MOVINMan'
+
+Subject 'MOVINMan' is streaming bone lengths calibrated to the performer, which differ from the
+reference pose of Skeletal Mesh 'MOVINman_V3_Puppet_UE' (largest first):
+Head 1.63x, Neck 1.49x, Spine 0.62x, Arm 0.87x.
+The mesh will visibly deform at those joints. This is expected, not a plugin error - it means the
+motion data is being applied without loss.
+```
+
+The notification **stays up until you dismiss it**, and comes back if the performer is recalibrated
+mid-session, since the figures you were shown no longer match what is on screen. It appears in
+whichever editor window you are in, including the Animation Blueprint editor. The same text is
+written to the Output Log under `LogMOVINLiveLink`.
+
+It is raised only for the `MOVINMan` subject - Character streams are named after the loaded
+character and carry no offset, so they stay quiet - and only for a Skeletal Mesh whose Animation
+Blueprint or Live Link Component Controller is actually bound to that subject. Other characters in
+the level are left alone even when they share MOVINman's bone names, which most Mixamo-derived
+skeletons do.
+
+The raw streamed transforms are always visible in the **Live Link** panel if you want to confirm
+the data itself is correct.
+
+Which path you want depends on what you are doing:
+
+| Goal | Use |
+|---|---|
+| Check that the stream is arriving | Actor streaming onto `MOVINman_V3_Puppet_UE` - deformation expected |
+| Drive a specific character | Stream a **Character** from MOVIN Studio, using the same `.fbx` on both sides |
+| Drive your own character from an Actor stream | Retarget with an **IK Retargeter**, using the MOVINman mesh as a hidden source |
+
+For the IK Retargeter route, keep the MOVINman component hidden and set its
+**Visibility Based Anim Tick** to `Always Tick Pose and Refresh Bones`, and make sure it ticks
+before the target. The retargeter reads bone transforms rather than skinned vertices, so the
+source mesh deforming does not affect the result.
+
+> Note: the **Translation Retargeting** settings on a Skeleton asset have no effect on Live Link.
+> They are only consulted on the AnimSequence and PoseAsset paths, so changing a bone to
+> `Skeleton` or `AnimationScaled` will not alter what Live Link produces.
 
 ## Packaged Game Setup
 
@@ -216,13 +269,14 @@ Key log events:
 - New subject detected (first packet for a character)
 - Skeleton changes (bone count or bone name changes)
 - Parse failures and invalid datagrams
+- Skeleton calibration offset between an Actor subject and the Skeletal Mesh it drives
 
 ## Project Structure
 
 ```
 MOVINLiveLink/
 |-- MOVINLiveLink.uplugin
-|-- MOVINman_V3.fbx
+|-- MOVINman_V3_Puppet_UE.fbx
 |-- Config/
 |   `-- FilterPlugin.ini
 |-- Resources/
@@ -237,16 +291,19 @@ MOVINLiveLink/
         |   |-- MOVINLiveLinkSource.h            # LiveLink source (UDP receiver)
         |   |-- MOVINLiveLinkSourceEditor.h      # Editor UI (port selector)
         |   |-- MOVINLiveLinkSourceFactory.h     # LiveLink source factory
+        |   |-- MOVINSkeletonDiagnostics.h       # Skeleton calibration offset reporting
         |   `-- MOVINStreamValidation.h          # Raw stream validation logging
         `-- Private/
             |-- Tests/
-            |   `-- MOVINDatagramParserTest.cpp
+            |   |-- MOVINDatagramParserTest.cpp
+            |   `-- MOVINSkeletonDiagnosticsTest.cpp
             |-- MOVINDatagram.cpp
             |-- MOVINLiveLinkFunctionLibrary.cpp
             |-- MOVINLiveLinkModule.cpp
             |-- MOVINLiveLinkSource.cpp
             |-- MOVINLiveLinkSourceEditor.cpp
             |-- MOVINLiveLinkSourceFactory.cpp
+            |-- MOVINSkeletonDiagnostics.cpp
             |-- MOVINStreamValidation.cpp
             `-- MOVINValidationProtocol.h
 ```

@@ -2,6 +2,7 @@
 
 #include "MOVINLiveLinkSource.h"
 #include "MOVINLiveLinkModule.h"
+#include "MOVINSkeletonDiagnostics.h"
 #include "MOVINStreamValidation.h"
 #include "MOVINValidationProtocol.h"
 #include "ILiveLinkClient.h"
@@ -167,6 +168,9 @@ void FMOVINLiveLinkSource::Update()
 	{
 		UpdateReceiveStatus();
 	}
+
+	// Deferred here because the scan walks Skeletal Mesh components, which is game thread only.
+	FMOVINSkeletonDiagnostics::Tick();
 }
 
 // FRunnable interface
@@ -489,6 +493,11 @@ void FMOVINLiveLinkSource::ProcessReceivedData(const TArray<uint8>& RawData)
 			return;
 		}
 	}
+
+	// Watches the streamed bone lengths for the calibration offset. Called per frame rather than
+	// only on static data because a recalibration keeps the same bone names, so it would not
+	// otherwise be noticed.
+	FMOVINSkeletonDiagnostics::NoteSkeleton(SubjectName, Datagram.Bones);
 
 	FLiveLinkFrameDataStruct FrameData(FLiveLinkAnimationFrameData::StaticStruct());
 	FLiveLinkAnimationFrameData& AnimFrameData = *FrameData.Cast<FLiveLinkAnimationFrameData>();

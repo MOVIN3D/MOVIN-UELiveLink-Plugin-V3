@@ -1,6 +1,7 @@
 // Copyright 2025 MOVIN. All Rights Reserved.
 
 #include "MOVINLiveLinkModule.h"
+#include "MOVINSkeletonDiagnostics.h"
 
 DEFINE_LOG_CATEGORY(LogMOVINLiveLink);
 
@@ -12,6 +13,7 @@ void FMOVINLiveLinkModule::StartupModule()
 
 void FMOVINLiveLinkModule::ShutdownModule()
 {
+	FMOVINSkeletonDiagnostics::Reset();
 }
 
 #undef LOCTEXT_NAMESPACE
