@@ -71,6 +71,8 @@ To install a prebuilt package:
 4. Set the UDP port (default `11236`) and click **Add**
 5. Start streaming from MOVIN Studio; subjects will appear in the LiveLink panel
 
+The source status column reports the receive rate. The expected rate is `60 fps`; below `55 fps` is shown as a warning and below `50 fps` as critical.
+
 ## Setting Up Your Character
 
 To drive a Skeletal Mesh character with LiveLink data:
@@ -188,48 +190,9 @@ The plugin expects binary UDP packets from MOVIN Studio in the following layout.
 
 > **Coordinate system:** The plugin converts from Unity's Y-up left-hand coordinate system (X, Y, Z) to Unreal's Z-up left-hand system (Z, X, Y) automatically.
 
-### Validation control packets
-
-When `subjectName` is `__MOVIN_STREAM_VALIDATION__`, the datagram is treated as a stream validation control packet instead of a motion packet. In that case:
-
-- `boneCount` must be `0`
-- `frameIdx` must be `-2147483601` to begin a validation session, or `-2147483602` to end one
-- The packet body continues with `sessionId`, `target`, `durationSeconds`, and `directory`
-
-The extra string fields use the same C# `BinaryWriter` 7-bit encoded length prefix as `subjectName`.
-
 ## Stream Validation
 
-The Unreal validation path focuses on the plugin's receiver boundary:
-
-1. MOVIN Studio raw datagram vs Unreal receiver raw datagram
-2. Receiver FPS stability for a 60 FPS sender
-
-When MOVIN Studio starts a stream validation session for `Unreal_LiveLink`, it writes `<sessionId>_App` under:
-
-```text
-C:\Users\{current_user}\Documents\MOVIN Studio\StreamValidation\Unreal_LiveLink
-```
-
-The LiveLink source automatically attaches to the newest `<sessionId>_App` file and writes:
-
-```text
-<sessionId>_Plugin
-```
-
-The plugin file uses the same raw packet format:
-
-```text
-MOVIN_STREAM_VALIDATION_PACKET_V1
-session=<sessionId>
-target=Unreal_LiveLink
-packet_format=base64_udp_datagram
-000000|<base64 udp datagram>
-```
-
-Only validation motion packets with a negative `frameIdx` are recorded, matching MOVIN Studio's `_App` file. LiveLink frame snapshots and final SkeletalMesh-applied poses are intentionally not part of Unreal validation because those are owned by Unreal LiveLink, Animation Blueprint, skeleton, and retargeting setup after the plugin pushes the frame.
-
-The LiveLink source status also shows receiver FPS. The expected rate is `60 fps`; below `55 fps` is reported as a warning and below `50 fps` as critical.
+If MOVIN Studio starts a stream validation session for `Unreal_LiveLink`, the LiveLink source records the datagrams it received alongside MOVIN Studio's own recording, under `Documents\MOVIN Studio\StreamValidation\Unreal_LiveLink`. Comparing the two files is how MOVIN support checks whether packets arrived intact. Nothing needs configuring on the Unreal side.
 
 ## Multiple Characters
 
@@ -259,43 +222,6 @@ Key log events:
 - Skeleton changes (bone count or bone name changes)
 - Parse failures and invalid datagrams
 - Skeleton calibration offset between an Actor subject and the Skeletal Mesh it drives
-
-## Project Structure
-
-```
-MOVINLiveLink/
-|-- MOVINLiveLink.uplugin
-|-- MOVINman_V3_Puppet_UE.fbx
-|-- Config/
-|   `-- FilterPlugin.ini
-|-- Resources/
-|   `-- Icon128.png
-`-- Source/
-    `-- MOVINLiveLink/
-        |-- MOVINLiveLink.Build.cs
-        |-- Public/
-        |   |-- MOVINDatagram.h                  # Packet parsing
-        |   |-- MOVINLiveLinkFunctionLibrary.h   # Blueprint function library
-        |   |-- MOVINLiveLinkModule.h            # Plugin module + log category
-        |   |-- MOVINLiveLinkSource.h            # LiveLink source (UDP receiver)
-        |   |-- MOVINLiveLinkSourceEditor.h      # Editor UI (port selector)
-        |   |-- MOVINLiveLinkSourceFactory.h     # LiveLink source factory
-        |   |-- MOVINSkeletonDiagnostics.h       # Skeleton calibration offset reporting
-        |   `-- MOVINStreamValidation.h          # Raw stream validation logging
-        `-- Private/
-            |-- Tests/
-            |   |-- MOVINDatagramParserTest.cpp
-            |   `-- MOVINSkeletonDiagnosticsTest.cpp
-            |-- MOVINDatagram.cpp
-            |-- MOVINLiveLinkFunctionLibrary.cpp
-            |-- MOVINLiveLinkModule.cpp
-            |-- MOVINLiveLinkSource.cpp
-            |-- MOVINLiveLinkSourceEditor.cpp
-            |-- MOVINLiveLinkSourceFactory.cpp
-            |-- MOVINSkeletonDiagnostics.cpp
-            |-- MOVINStreamValidation.cpp
-            `-- MOVINValidationProtocol.h
-```
 
 ## License
 
