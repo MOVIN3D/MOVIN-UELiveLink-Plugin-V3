@@ -54,7 +54,7 @@ After the build completes, reopen the project in Unreal Editor.
 
 You can also use the plugin in a **Blueprint-only project** with a prebuilt plugin package.
 
-Download the zip package that matches your Unreal Engine version from the [prebuilt release](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/prebuilt).
+Download the zip package that matches your Unreal Engine version from the [prebuilt release](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/prebuilt). Packages are provided for Unreal Engine 5.3 - 5.8 on Windows 64-bit and are built from the current source, so they include the skeleton calibration offset notification described below. Debug symbols (`.pdb`) are not included.
 
 To install a prebuilt package:
 
@@ -105,19 +105,8 @@ The mesh will visibly deform at those joints. This is expected, not a plugin err
 motion data is being applied without loss.
 ```
 
-The notification **stays up until you dismiss it**, and comes back if the performer is recalibrated
-mid-session, since the figures you were shown no longer match what is on screen. It appears in
-whichever editor window you are in, including the Animation Blueprint editor. The same text is
-written to the Output Log under `LogMOVINLiveLink`.
-
-It is raised only for the `MOVINMan` subject - Character streams are named after the loaded
-character and carry no offset, so they stay quiet - and only for a Skeletal Mesh whose Animation
-Blueprint or Live Link Component Controller is actually bound to that subject. Other characters in
-the level are left alone even when they share MOVINman's bone names, which most Mixamo-derived
-skeletons do.
-
-The raw streamed transforms are always visible in the **Live Link** panel if you want to confirm
-the data itself is correct.
+The notification stays up until you dismiss it. The same text is written to the Output Log under
+`LogMOVINLiveLink`.
 
 Which path you want depends on what you are doing:
 
