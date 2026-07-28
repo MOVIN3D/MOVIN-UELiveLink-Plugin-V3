@@ -190,10 +190,6 @@ The plugin expects binary UDP packets from MOVIN Studio in the following layout.
 
 > **Coordinate system:** The plugin converts from Unity's Y-up left-hand coordinate system (X, Y, Z) to Unreal's Z-up left-hand system (Z, X, Y) automatically.
 
-## Stream Validation
-
-If MOVIN Studio starts a stream validation session for `Unreal_LiveLink`, the LiveLink source records the datagrams it received alongside MOVIN Studio's own recording, under `Documents\MOVIN Studio\StreamValidation\Unreal_LiveLink`. Comparing the two files is how MOVIN support checks whether packets arrived intact. Nothing needs configuring on the Unreal side.
-
 ## Multiple Characters
 
 To stream multiple characters at the same time, use **one Tracin device and one MOVIN Studio instance per character**.
