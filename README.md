@@ -54,7 +54,7 @@ After the build completes, reopen the project in Unreal Editor.
 
 You can also use the plugin in a **Blueprint-only project** with a prebuilt plugin package.
 
-Download the zip package that matches your Unreal Engine version from the [prebuilt release](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/prebuilt). Packages are provided for Unreal Engine 5.3 - 5.8 on Windows 64-bit and are built from the current source, so they include the skeleton calibration offset notification described below. Debug symbols (`.pdb`) are not included.
+Download the zip package that matches your Unreal Engine version from the [prebuilt release](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/prebuilt). Packages are provided for Unreal Engine 5.3 - 5.8 on Windows 64-bit and are built from the current source. Debug symbols (`.pdb`) are not included.
 
 To install a prebuilt package:
 
