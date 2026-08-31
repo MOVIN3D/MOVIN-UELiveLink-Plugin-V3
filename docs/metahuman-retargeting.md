@@ -18,7 +18,7 @@ retargeting comes out correct. Every step below is one of those three things.
 | Capture | MOVIN Studio v3.0.0+ streaming an **Actor** |
 | Plugin | MOVINLiveLink 1.1.0 or newer, with **LiveLink** enabled |
 | Character | A MetaHuman already imported into the project |
-| Source mesh | `MOVINman_V3_Puppet_UE.fbx`, included in this repository |
+| Source mesh | `MOVINman_V3_Puppet_UE.fbx`, shipped with the plugin |
 | Network | MOVIN Studio and Unreal on the same network |
 
 ---

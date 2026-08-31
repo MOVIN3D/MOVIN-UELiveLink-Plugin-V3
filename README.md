@@ -74,7 +74,12 @@ Do all of this once, whichever setup you are heading for.
 
 ### 1. Import the MOVINman mesh
 
-Import `MOVINman_V3_Puppet_UE.fbx`, at the root of this repository, into your project's Content.
+Import `MOVINman_V3_Puppet_UE.fbx` into your project's Content. It ships with the plugin, so once you have installed it the file is already on disk:
+
+| Installed with | Find the `.fbx` in |
+|---|---|
+| Option 1, from source | the root of this repository |
+| Option 2, prebuilt package | `Plugins/MOVINLiveLinkPlugin/` in your project |
 
 This is the mesh that **receives** an Actor stream. It is not the character anyone sees - if you go on to drive your own character it stays hidden, and only the retargeter reads it.
 
