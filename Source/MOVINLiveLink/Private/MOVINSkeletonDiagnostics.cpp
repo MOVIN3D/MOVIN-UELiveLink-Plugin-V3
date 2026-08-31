@@ -187,25 +187,32 @@ namespace MOVINSkeletonDiagnosticsPrivate
 	/**
 	 * Note the bone lengths this frame and bump the revision if they moved.
 	 *
-	 * Deliberately ignores bones carrying world movement: the pelvis translation is a position and
-	 * changes every frame, so including it would report a recalibration on every packet. Until
-	 * enough frames have been seen to identify those bones there is nothing safe to hash, so the
-	 * revision simply stays where it is.
+	 * Nothing is hashed until at least one bone has been identified as carrying world movement.
+	 * The pelvis translation is a position rather than a length and changes every frame, so hashing
+	 * before it can be told apart bumps the revision on almost every packet.
+	 *
+	 * That is not merely noise. A changed revision means "recalibrated, act now" to the fitting
+	 * sweep, which skips its own two second interval to react - so a churning revision made it walk
+	 * every Skeletal Mesh component in memory every frame, for as long as the actor took to move
+	 * enough to be measured. Streaming an actor who stood still for half a minute produced a
+	 * revision of 606 before the first fit.
+	 *
+	 * Waiting on the same condition FMOVINStreamedSkeleton::bWorldMotionResolved reports keeps the
+	 * revision meaningless-but-stable rather than meaningless-and-moving until there is something
+	 * real to say.
 	 */
 	static void UpdateCalibrationRevision(FTrackedSubject& Tracked)
 	{
-		if (Tracked.FramesObserved < FMOVINSkeletonDiagnostics::MinFramesForMotionCheck)
-		{
-			return;
-		}
-
-		const int32 ChangeThreshold = FMath::CeilToInt(Tracked.FramesObserved * FMOVINSkeletonDiagnostics::WorldMotionChangeFraction);
+		const int32 Count = FMath::Min(Tracked.BoneNames.Num(), Tracked.LengthChangeCounts.Num());
 
 		uint32 Hash = 0;
-		for (int32 Index = 0; Index < Tracked.BoneNames.Num(); ++Index)
+		bool bAnyWorldMotion = false;
+
+		for (int32 Index = 0; Index < Count; ++Index)
 		{
-			if (Tracked.LengthChangeCounts[Index] > ChangeThreshold)
+			if (FMOVINSkeletonDiagnostics::IsWorldMotionBone(Tracked.LengthChangeCounts[Index], Tracked.FramesObserved))
 			{
+				bAnyWorldMotion = true;
 				continue;
 			}
 
@@ -214,6 +221,13 @@ namespace MOVINSkeletonDiagnosticsPrivate
 			const int32 Quantised = FMath::RoundToInt(Tracked.Translations[Index].Size() / LengthChangeToleranceCm);
 			Hash = HashCombine(Hash, GetTypeHash(Tracked.BoneNames[Index]));
 			Hash = HashCombine(Hash, GetTypeHash(Quantised));
+		}
+
+		// Either too few frames, or an actor who has not moved yet. Every translation still reads as
+		// a length, including the one that is a world position, so there is nothing safe to hash.
+		if (!bAnyWorldMotion)
+		{
+			return;
 		}
 
 		if (Hash != Tracked.CalibrationHash)
@@ -406,17 +420,26 @@ TSet<FName> FMOVINSkeletonDiagnostics::FindWorldMotionBones(
 	}
 
 	const int32 Count = FMath::Min(BoneNames.Num(), LengthChangeCounts.Num());
-	const int32 ChangeThreshold = FMath::CeilToInt(FramesObserved * WorldMotionChangeFraction);
 
 	for (int32 Index = 0; Index < Count; ++Index)
 	{
-		if (LengthChangeCounts[Index] >= ChangeThreshold)
+		if (IsWorldMotionBone(LengthChangeCounts[Index], FramesObserved))
 		{
 			WorldMotionBones.Add(BoneNames[Index]);
 		}
 	}
 
 	return WorldMotionBones;
+}
+
+bool FMOVINSkeletonDiagnostics::IsWorldMotionBone(int32 LengthChangeCount, int32 FramesObserved)
+{
+	if (FramesObserved < MinFramesForMotionCheck)
+	{
+		return false;
+	}
+
+	return LengthChangeCount >= FMath::CeilToInt(FramesObserved * WorldMotionChangeFraction);
 }
 
 FString FMOVINSkeletonDiagnostics::BuildReportSignature(const FString& MeshName, const FMOVINSkeletonDeviationReport& Report)

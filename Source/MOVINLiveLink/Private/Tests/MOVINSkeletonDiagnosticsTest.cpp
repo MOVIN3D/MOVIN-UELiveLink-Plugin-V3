@@ -465,4 +465,46 @@ bool FMOVINSkeletonActorSubjectOnlyTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMOVINSkeletonWorldMotionThresholdTest, "MOVIN.SkeletonDiagnostics.WorldMotionThreshold",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FMOVINSkeletonWorldMotionThresholdTest::RunTest(const FString& Parameters)
+{
+	const TArray<FName> BoneNames = { TEXT("Hips"), TEXT("Spine") };
+
+	// The boundary was written out twice, once per caller, and the two comparisons disagreed: the
+	// report excluded a bone sitting exactly on the threshold while the calibration hash counted it
+	// as a length. Both now go through IsWorldMotionBone, so the only way they can drift apart
+	// again is if someone reintroduces a second copy of the test.
+	const int32 Frames = 100;
+	const int32 Threshold = FMath::CeilToInt(Frames * FMOVINSkeletonDiagnostics::WorldMotionChangeFraction);
+
+	TestFalse(TEXT("Just under the threshold is a bone length"),
+		FMOVINSkeletonDiagnostics::IsWorldMotionBone(Threshold - 1, Frames));
+	TestTrue(TEXT("Exactly on the threshold is world movement"),
+		FMOVINSkeletonDiagnostics::IsWorldMotionBone(Threshold, Frames));
+
+	const TArray<int32> OnTheBoundary = { Threshold, Threshold - 1 };
+	const TSet<FName> Reported = FMOVINSkeletonDiagnostics::FindWorldMotionBones(BoneNames, OnTheBoundary, Frames);
+	TestEqual(TEXT("The set answers the same as the per bone test"), Reported.Num(), 1);
+	TestTrue(TEXT("...and on the same bone"), Reported.Contains(FName(TEXT("Hips"))));
+
+	// An actor who has not moved yet. Their pelvis holds still, so its translation is
+	// indistinguishable from a bone length and nothing can be concluded - which is what the
+	// calibration revision waits on. Answering "not world movement" here is what makes it wait:
+	// streaming a stationary actor previously bumped the revision on almost every packet, and each
+	// bump made the fitting sweep skip its interval and walk every component in memory.
+	const TArray<int32> Stationary = { 0, 0 };
+	TestEqual(TEXT("A stationary actor resolves nothing"),
+		FMOVINSkeletonDiagnostics::FindWorldMotionBones(BoneNames, Stationary, 2000).Num(), 0);
+
+	// Enough frames on their own are not enough; the count is what decides.
+	TestFalse(TEXT("Frames alone do not make a bone world movement"),
+		FMOVINSkeletonDiagnostics::IsWorldMotionBone(0, 2000));
+	TestFalse(TEXT("Nothing is concluded before the minimum frame count"),
+		FMOVINSkeletonDiagnostics::IsWorldMotionBone(1000, FMOVINSkeletonDiagnostics::MinFramesForMotionCheck - 1));
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

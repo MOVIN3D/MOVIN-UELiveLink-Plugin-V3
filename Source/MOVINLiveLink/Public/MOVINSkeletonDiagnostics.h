@@ -146,6 +146,16 @@ public:
 		TArrayView<const int32> LengthChangeCounts,
 		int32 FramesObserved);
 
+	/**
+	 * The per bone test behind FindWorldMotionBones(), for callers that have an index rather than a
+	 * set and cannot afford to build one per frame.
+	 *
+	 * Exposed so there is one definition of the boundary. It was previously written out a second
+	 * time, with the comparison a shade looser, and a bone sitting exactly on the threshold was
+	 * counted as world movement by one caller and as a bone length by the other.
+	 */
+	static bool IsWorldMotionBone(int32 LengthChangeCount, int32 FramesObserved);
+
 	/** Frames needed before world movement can be told apart from a static bone length. */
 	static constexpr int32 MinFramesForMotionCheck = 30;
 

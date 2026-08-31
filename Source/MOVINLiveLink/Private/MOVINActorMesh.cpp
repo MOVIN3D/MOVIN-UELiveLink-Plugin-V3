@@ -129,6 +129,16 @@ namespace MOVINActorMeshPrivate
 			return nullptr;
 		}
 
+		// The flags come across with the duplicate, and the template is an imported asset, so the
+		// copy arrives RF_Public | RF_Standalone. In an editor build RF_Standalone *is*
+		// GARBAGE_COLLECTION_KEEPFLAGS - it keeps an object alive with no references at all, which
+		// is what an asset in the Content Browser needs and the opposite of what this needs.
+		//
+		// Left set, every refit stranded a ~9 MB mesh for the rest of the session: `obj refs`
+		// reported it as "not currently reachable", and no amount of `obj gc` would collect it.
+		// Packaged builds never showed it, because the macro is RF_NoFlags outside the editor.
+		Fitted->ClearFlags(RF_Public | RF_Standalone);
+
 		{
 			// Scoped: the modifier rebuilds the reference skeleton's name map and virtual bones when
 			// it goes out of scope, and the inverse bind matrices have to be recalculated after that.

@@ -1,6 +1,10 @@
 _build/
 Prebuilt/
 
+# Release tooling. Installing from source copies this whole folder into the
+# user's Plugins/ directory, and nothing here is any use to them.
+Scripts/
+
 Binaries/
 Intermediate/
 Saved/
