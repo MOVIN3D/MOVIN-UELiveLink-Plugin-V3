@@ -19,7 +19,7 @@ Receives real-time motion capture data from MOVIN Studio via UDP and feeds it in
 | Platform | Windows 64-bit |
 | Capture | MOVIN Studio **v3.0.0+** |
 | Network | MOVIN Studio and Unreal on the same network |
-| Project | A **C++ project** for Option 1; any project, including **Blueprint-only**, for Option 2 |
+| Project | A **C++ project** for Option 1; any project, including **Blueprint-only**, for Option 2. Shipping a packaged game needs the C++ project either way - see Option 2 |
 
 Unreal's own **LiveLink** plugin must be enabled as well: **Edit > Plugins**, search "Live Link", enable, restart.
 
@@ -55,9 +55,11 @@ If the plugin does not build automatically:
 6. Click **Build**
 7. Reopen the project in Unreal Editor
 
-### Option 2: Prebuilt package (Blueprint-only project)
+### Option 2: Prebuilt package (Blueprint-only project, editor only)
 
-A Blueprint-only project cannot compile the plugin, so use a prebuilt package instead.
+A Blueprint-only project cannot compile the plugin, so use a prebuilt package instead. Everything in the editor works this way - receiving the stream, driving a character, retargeting.
+
+> **This route cannot ship a packaged game.** A Blueprint-only project packages against the engine's own `UnrealGame.exe`, which no project plugin can be added to, so the plugin is left out. Nothing reports this: the package succeeds and the built game simply has no MOVIN Live Source. If you need the plugin in a packaged build, your project has to be a C++ project - use Option 1.
 
 1. Download the zip for your Unreal Engine version from the [prebuilt release](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/prebuilt)
 2. Extract the zip
@@ -263,6 +265,8 @@ For manual control there are two Blueprint nodes: **Fit Mesh To MOVIN Actor** (S
 ## Packaged Game Setup
 
 The plugin runs in packaged (shipped) games. A LiveLink source cannot be saved into a build the way it is added in the editor, so create it at runtime with the **Add MOVIN LiveLink Source** Blueprint node.
+
+> **Your project has to be a C++ project, installed from source (Option 1).** A Blueprint-only project packages against the engine's own `UnrealGame.exe` and cannot have a plugin added to it, so the plugin is silently left out - the package still reports success. If your project has no `Source/` folder, add a C++ class from the editor (**Tools > New C++ Class**) before packaging.
 
 ### 1. Enable the plugins
 
