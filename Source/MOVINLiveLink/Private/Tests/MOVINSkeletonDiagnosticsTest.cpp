@@ -254,7 +254,7 @@ bool FMOVINSkeletonSymmetricBonesTest::RunTest(const FString& Parameters)
 {
 	using namespace MOVINSkeletonDiagnosticsTestHelpers;
 
-	// A real performer calibrates left and right to figures that agree to two decimals and differ
+	// A real actor calibrates left and right to figures that agree to two decimals and differ
 	// only in the far ones. TArray::Sort is not stable, so ranking on the raw floats let those pairs
 	// swap places between scans - identical bones, identical printed ratios, different order. That
 	// was enough to look like a new report and re-raise the notification every two seconds.

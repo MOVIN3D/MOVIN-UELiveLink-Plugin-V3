@@ -9,7 +9,9 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/SkinnedAsset.h"
 #include "GameFramework/Actor.h"
+#include "Engine/World.h"
 #include "HAL/CriticalSection.h"
+#include "HAL/ThreadSafeCounter.h"
 #include "LiveLinkComponentController.h"
 #include "Misc/ScopeLock.h"
 #include "Misc/StringBuilder.h"
@@ -52,6 +54,17 @@ namespace MOVINSkeletonDiagnosticsPrivate
 		int32 FramesObserved = 0;
 
 		/**
+		 * Hash of the bone lengths as of the last frame, and a counter bumped whenever it changes.
+		 *
+		 * Only tracked once world movement can be identified, because the pelvis translation moves
+		 * every frame and would otherwise read as a recalibration on every packet. Anything built
+		 * from these lengths - a fitted Skeletal Mesh, say - compares against the counter to know
+		 * whether it is looking at the same actor it was built for.
+		 */
+		uint32 CalibrationHash = 0;
+		int32 CalibrationRevision = 0;
+
+		/**
 		 * Signature of the report currently on screen, per Skeletal Mesh. Keyed by mesh rather than
 		 * held as a single value because a subject can legitimately drive more than one mesh, and a
 		 * single slot would flip between them and re-notify on every scan.
@@ -62,6 +75,9 @@ namespace MOVINSkeletonDiagnosticsPrivate
 	static FCriticalSection StateCriticalSection;
 	static TMap<FName, FTrackedSubject> TrackedSubjects;
 	static double LastScanTimeSeconds = 0.0;
+
+	/** Bumped on every calibration change, across all subjects. See GetCalibrationVersion(). */
+	static FThreadSafeCounter CalibrationVersion;
 
 	/** Identifies one subject driving one mesh - the unit a notification belongs to. */
 	static FString MakeNotificationKey(const FName& SubjectName, const FString& MeshName)
@@ -166,6 +182,46 @@ namespace MOVINSkeletonDiagnosticsPrivate
 		}
 
 		return false;
+	}
+
+	/**
+	 * Note the bone lengths this frame and bump the revision if they moved.
+	 *
+	 * Deliberately ignores bones carrying world movement: the pelvis translation is a position and
+	 * changes every frame, so including it would report a recalibration on every packet. Until
+	 * enough frames have been seen to identify those bones there is nothing safe to hash, so the
+	 * revision simply stays where it is.
+	 */
+	static void UpdateCalibrationRevision(FTrackedSubject& Tracked)
+	{
+		if (Tracked.FramesObserved < FMOVINSkeletonDiagnostics::MinFramesForMotionCheck)
+		{
+			return;
+		}
+
+		const int32 ChangeThreshold = FMath::CeilToInt(Tracked.FramesObserved * FMOVINSkeletonDiagnostics::WorldMotionChangeFraction);
+
+		uint32 Hash = 0;
+		for (int32 Index = 0; Index < Tracked.BoneNames.Num(); ++Index)
+		{
+			if (Tracked.LengthChangeCounts[Index] > ChangeThreshold)
+			{
+				continue;
+			}
+
+			// Quantised to the tolerance the tracker already treats as "unchanged", so stream jitter
+			// below that does not churn the revision.
+			const int32 Quantised = FMath::RoundToInt(Tracked.Translations[Index].Size() / LengthChangeToleranceCm);
+			Hash = HashCombine(Hash, GetTypeHash(Tracked.BoneNames[Index]));
+			Hash = HashCombine(Hash, GetTypeHash(Quantised));
+		}
+
+		if (Hash != Tracked.CalibrationHash)
+		{
+			Tracked.CalibrationHash = Hash;
+			CalibrationVersion.Increment();
+			++Tracked.CalibrationRevision;
+		}
 	}
 
 	static void DismissNotification(FString NotificationKey)
@@ -287,7 +343,7 @@ FMOVINSkeletonDeviationReport FMOVINSkeletonDiagnostics::CompareBoneLengths(
 	// Rank by how far off each bone is, but compare at the precision the message prints and break
 	// ties by name.
 	//
-	// A performer's left and right sides calibrate to figures that agree to two decimals and differ
+	// An actor's left and right sides calibrate to figures that agree to two decimals and differ
 	// only in the far ones, and TArray::Sort is not stable, so comparing raw floats let Left/Right
 	// pairs swap places between scans. Nothing the user could see had changed, but the ordering had,
 	// which was enough to look like a new report and re-raise the notification every two seconds.
@@ -310,7 +366,7 @@ FString FMOVINSkeletonDiagnostics::FormatReport(const FName& SubjectName, const 
 	using namespace MOVINSkeletonDiagnosticsPrivate;
 
 	TStringBuilder<1024> Builder;
-	Builder.Appendf(TEXT("Subject '%s' is streaming bone lengths calibrated to the performer, "),
+	Builder.Appendf(TEXT("Subject '%s' is streaming bone lengths calibrated to the actor, "),
 		*SubjectName.ToString());
 	Builder.Appendf(TEXT("which differ from the reference pose of Skeletal Mesh '%s'"), *MeshName);
 
@@ -447,6 +503,7 @@ void FMOVINSkeletonDiagnostics::NoteSkeleton(const FName& SubjectName, const TAr
 	}
 
 	++Tracked.FramesObserved;
+	UpdateCalibrationRevision(Tracked);
 	Tracked.LastFrameTimeSeconds = FPlatformTime::Seconds();
 }
 
@@ -488,7 +545,7 @@ void FMOVINSkeletonDiagnostics::Tick()
 	for (TObjectIterator<USkeletalMeshComponent> It; It; ++It)
 	{
 		USkeletalMeshComponent* Component = *It;
-		if (Component == nullptr || Component->IsTemplate() || !IsValid(Component))
+		if (!FMOVINSkeletonDiagnostics::IsComponentInLiveWorld(Component))
 		{
 			continue;
 		}
@@ -602,6 +659,85 @@ void FMOVINSkeletonDiagnostics::Reset()
 	FScopeLock Lock(&StateCriticalSection);
 	TrackedSubjects.Empty();
 	LastScanTimeSeconds = 0.0;
+}
+
+void FMOVINSkeletonDiagnostics::GetTrackedSubjects(TArray<FName>& OutSubjects)
+{
+	using namespace MOVINSkeletonDiagnosticsPrivate;
+
+	OutSubjects.Reset();
+
+	FScopeLock Lock(&StateCriticalSection);
+	TrackedSubjects.GetKeys(OutSubjects);
+}
+
+bool FMOVINSkeletonDiagnostics::GetStreamedSkeleton(const FName& SubjectName, FMOVINStreamedSkeleton& OutSkeleton)
+{
+	using namespace MOVINSkeletonDiagnosticsPrivate;
+
+	FScopeLock Lock(&StateCriticalSection);
+
+	const FTrackedSubject* Tracked = TrackedSubjects.Find(SubjectName);
+	if (Tracked == nullptr || Tracked->BoneNames.Num() == 0)
+	{
+		return false;
+	}
+
+	OutSkeleton.BoneNames = Tracked->BoneNames;
+	OutSkeleton.LocalTranslations = Tracked->Translations;
+	OutSkeleton.WorldMotionBones = FindWorldMotionBones(
+		Tracked->BoneNames,
+		Tracked->LengthChangeCounts,
+		Tracked->FramesObserved);
+	OutSkeleton.CalibrationRevision = Tracked->CalibrationRevision;
+
+	// Refusing to answer until a bone has actually been seen carrying world movement is the
+	// conservative reading: an actor who has not moved at all yet is indistinguishable from a rig
+	// whose pelvis translation really is a bone length, and guessing wrong would bake their world
+	// position into the skeleton.
+	OutSkeleton.bWorldMotionResolved =
+		Tracked->FramesObserved >= MinFramesForMotionCheck && OutSkeleton.WorldMotionBones.Num() > 0;
+
+	return OutSkeleton.IsUsable();
+}
+
+bool FMOVINSkeletonDiagnostics::IsComponentDrivenBySubject(const USkeletalMeshComponent* Component, const FName& SubjectName)
+{
+	using namespace MOVINSkeletonDiagnosticsPrivate;
+
+	return Component != nullptr && IsDrivenBySubject(Component, SubjectName);
+}
+
+bool FMOVINSkeletonDiagnostics::IsComponentInLiveWorld(const USkeletalMeshComponent* Component)
+{
+	if (!IsValid(Component) || Component->IsTemplate())
+	{
+		return false;
+	}
+
+	const UWorld* World = Component->GetWorld();
+	if (World == nullptr)
+	{
+		return false;
+	}
+
+	switch (World->WorldType)
+	{
+	case EWorldType::Editor:
+	case EWorldType::PIE:
+	case EWorldType::Game:
+		return true;
+	default:
+		// EditorPreview, GamePreview, Inactive - thumbnail and asset editor viewports.
+		return false;
+	}
+}
+
+int32 FMOVINSkeletonDiagnostics::GetCalibrationVersion()
+{
+	using namespace MOVINSkeletonDiagnosticsPrivate;
+
+	return CalibrationVersion.GetValue();
 }
 
 #undef LOCTEXT_NAMESPACE

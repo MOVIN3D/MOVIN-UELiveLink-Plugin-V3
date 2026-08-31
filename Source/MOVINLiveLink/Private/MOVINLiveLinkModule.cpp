@@ -1,6 +1,7 @@
 // Copyright 2025 MOVIN. All Rights Reserved.
 
 #include "MOVINLiveLinkModule.h"
+#include "MOVINActorMesh.h"
 #include "MOVINSkeletonDiagnostics.h"
 
 DEFINE_LOG_CATEGORY(LogMOVINLiveLink);
@@ -13,6 +14,7 @@ void FMOVINLiveLinkModule::StartupModule()
 
 void FMOVINLiveLinkModule::ShutdownModule()
 {
+	FMOVINActorMesh::Reset();
 	FMOVINSkeletonDiagnostics::Reset();
 }
 

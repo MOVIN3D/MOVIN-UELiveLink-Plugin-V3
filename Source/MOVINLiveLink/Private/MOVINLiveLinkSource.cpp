@@ -2,6 +2,7 @@
 
 #include "MOVINLiveLinkSource.h"
 #include "MOVINLiveLinkModule.h"
+#include "MOVINActorMesh.h"
 #include "MOVINSkeletonDiagnostics.h"
 #include "MOVINStreamValidation.h"
 #include "MOVINValidationProtocol.h"
@@ -171,6 +172,10 @@ void FMOVINLiveLinkSource::Update()
 
 	// Deferred here because the scan walks Skeletal Mesh components, which is game thread only.
 	FMOVINSkeletonDiagnostics::Tick();
+
+	// Same deferral, and it has to run after the diagnostics tick: the fit reads the calibration the
+	// tracker maintains.
+	FMOVINActorMesh::Tick();
 }
 
 // FRunnable interface

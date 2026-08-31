@@ -3,6 +3,8 @@
 #include "MOVINLiveLinkFunctionLibrary.h"
 #include "MOVINLiveLinkModule.h"
 #include "MOVINLiveLinkSource.h"
+#include "MOVINActorMesh.h"
+#include "MOVINSkeletonDiagnostics.h"
 
 #include "Features/IModularFeatures.h"
 #include "ILiveLinkClient.h"
@@ -35,4 +37,22 @@ bool UMOVINLiveLinkFunctionLibrary::AddMOVINLiveLinkSource(int32 Port)
 	}
 
 	return bSuccess;
+}
+
+bool UMOVINLiveLinkFunctionLibrary::FitMeshToMOVINActor(USkeletalMeshComponent* TargetComponent, FName SubjectName)
+{
+	FString Error;
+	if (FMOVINActorMesh::ApplyToComponent(TargetComponent, SubjectName, Error))
+	{
+		return true;
+	}
+
+	UE_LOG(LogMOVINLiveLink, Warning, TEXT("FitMeshToMOVINActor: %s"), *Error);
+	return false;
+}
+
+bool UMOVINLiveLinkFunctionLibrary::IsMOVINActorCalibrated(FName SubjectName)
+{
+	FMOVINStreamedSkeleton Skeleton;
+	return FMOVINSkeletonDiagnostics::GetStreamedSkeleton(SubjectName, Skeleton);
 }

@@ -6,6 +6,8 @@
 
 #include "MOVINDatagram.h"
 
+class USkeletalMeshComponent;
+
 /**
  * One bone whose streamed length differs from the target Skeletal Mesh's reference pose.
  * Ratio is StreamedLength / RefLength, so 1.63 means the streamed bone is 63% longer.
@@ -42,11 +44,42 @@ struct FMOVINRefPoseBone
 };
 
 /**
+ * The calibrated skeleton a subject is currently streaming: bone lengths that belong to the
+ * actor, not to any Skeletal Mesh.
+ *
+ * Only meaningful once bWorldMotionResolved is true. Until then the pelvis cannot be told apart
+ * from a bone length, and a skeleton built from this would bake the actor's world position into
+ * a bone offset.
+ */
+struct FMOVINStreamedSkeleton
+{
+	TArray<FName> BoneNames;
+
+	/** Local translations matching BoneNames by index. */
+	TArray<FVector> LocalTranslations;
+
+	/** Bones whose translation is world movement rather than a length; see FindWorldMotionBones(). */
+	TSet<FName> WorldMotionBones;
+
+	/**
+	 * Bumped whenever a bone length changes - a MOVIN Studio recalibration, or a different
+	 * actor stepping into the volume. Anything derived from these lengths can compare against
+	 * this to know whether it needs rebuilding.
+	 */
+	int32 CalibrationRevision = 0;
+
+	/** Whether enough frames have been seen to separate world movement from bone lengths. */
+	bool bWorldMotionResolved = false;
+
+	bool IsUsable() const { return bWorldMotionResolved && BoneNames.Num() > 0; }
+};
+
+/**
  * Detects and reports the "Skeleton Calibration Offset" - the expected difference between
  * the bone lengths MOVIN Studio streams and the bone lengths baked into the Unreal Skeletal Mesh.
  *
- * This only applies to Actor streaming. MOVIN Studio calibrates the skeleton to each performer's
- * body, so an Actor stream carries bone lengths that belong to the performer rather than to the
+ * This only applies to Actor streaming. MOVIN Studio calibrates the skeleton to each actor's
+ * body, so an Actor stream carries bone lengths that belong to the actor rather than to the
  * mesh. Those lengths are applied verbatim, which is what keeps the motion data intact - but it
  * means joints whose calibrated length differs from the mesh visibly change shape. That is correct
  * behaviour, and it reads as a plugin defect to anyone seeing it for the first time. This class
@@ -145,6 +178,46 @@ public:
 	 * internally rate limited.
 	 */
 	static void Tick();
+
+	/**
+	 * The calibrated skeleton last streamed by a subject.
+	 *
+	 * Returns false until enough frames have been seen to tell the pelvis apart from a bone length -
+	 * see MinFramesForMotionCheck. Safe to call from any thread.
+	 */
+	static bool GetStreamedSkeleton(const FName& SubjectName, FMOVINStreamedSkeleton& OutSkeleton);
+
+	/** Every subject currently streaming a skeleton. Safe to call from any thread. */
+	static void GetTrackedSubjects(TArray<FName>& OutSubjects);
+
+	/**
+	 * Is this component actually driven by the subject?
+	 *
+	 * Bone name matching is not enough on its own - Mixamo derived skeletons all share MOVINman's
+	 * bone names - so the binding has to come from the Animation Blueprint or a Live Link
+	 * controller. Exposed because anything that acts on a subject's mesh needs the same test.
+	 */
+	static bool IsComponentDrivenBySubject(const USkeletalMeshComponent* Component, const FName& SubjectName);
+
+	/**
+	 * Is this component in a world the user is actually looking at?
+	 *
+	 * Walking every Skeletal Mesh Component in memory also finds Blueprint archetypes and the preview
+	 * components inside the Animation Blueprint and Persona editors. Those are driven by the subject
+	 * exactly as well as the one in the level, so anything sweeping components has to exclude them -
+	 * otherwise the same subject gets reported, or acted on, once per open editor window.
+	 */
+	static bool IsComponentInLiveWorld(const USkeletalMeshComponent* Component);
+
+	/**
+	 * Counter bumped whenever any subject's calibration changes.
+	 *
+	 * Lets a periodic sweep react on the next frame instead of waiting out its interval: comparing
+	 * this against the value last seen is far cheaper than re-reading every subject, and a
+	 * recalibration is exactly the moment where waiting two seconds is visible on screen. Safe to
+	 * read from any thread.
+	 */
+	static int32 GetCalibrationVersion();
 
 	/** Dismiss any open notification and forget every tracked subject. */
 	static void Reset();
