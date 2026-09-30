@@ -16,7 +16,7 @@ retargeting comes out correct. Every step below is one of those three things.
 |---|---|
 | Engine | Unreal Engine 5.3 - 5.8, Windows 64-bit |
 | Capture | MOVIN Studio v3.0.0+ streaming an **Actor** |
-| Plugin | MOVINLiveLink 1.1.0 or newer, with **LiveLink** enabled |
+| Plugin | MOVINLiveLink v3.0.0 (formerly v1.1.0) or newer, with **LiveLink** enabled |
 | Character | A MetaHuman already imported into the project |
 | Source mesh | `MOVINman_V3_Puppet_UE.fbx`, shipped with the plugin |
 | Network | MOVIN Studio and Unreal on the same network |
@@ -93,7 +93,7 @@ high the pelvis sits, **against the reference pose of the source mesh**. An acto
 measure 0.79x streams a straight leg that reads as only 79% extended, so the retargeted MetaHuman
 stands with bent knees.
 
-From 1.1.0 the plugin handles this. Once a subject has streamed enough frames to be calibrated -
+The plugin handles this automatically. Once a subject has streamed enough frames to be calibrated -
 roughly half a second, and the actor has to have moved - it gives the source component a copy of
 its mesh whose reference pose carries the actor's bone lengths. Every ratio the retargeter works
 from is then correct by construction, with no scale factor to tune and no changes to your IK Rig or

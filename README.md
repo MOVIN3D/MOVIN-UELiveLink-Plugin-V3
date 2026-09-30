@@ -1,6 +1,16 @@
-# MOVIN LiveLink Plugin V3 (MOVIN Studio v3.0.0+) for UE5
+# MOVIN LiveLink Plugin v3.0.0 for UE5
 
 Receives real-time motion capture data from MOVIN Studio via UDP and feeds it into Unreal Engine's [LiveLink](https://dev.epicgames.com/documentation/en-us/unreal-engine/live-link-in-unreal-engine) system.
+
+## Version compatibility
+
+This is the legacy release recommended for MOVIN Studio **v3.0.0 through v3.2.0**.
+For Studio v3.3.0 or later, use [plugin v3.3.0](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/v3.3.0).
+
+Plugin v3.0.0 is the former v1.1.0 release with updated version labels, package names and documentation.
+Its runtime binaries and streaming behavior are unchanged. The original
+[v1.1.0 release](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/v1.1.0) remains available.
+This legacy version does not provide the Studio connection and LiveLink FPS status display.
 
 ## Features
 
@@ -61,7 +71,7 @@ A Blueprint-only project cannot compile the plugin, so use a prebuilt package in
 
 > **This route cannot ship a packaged game.** A Blueprint-only project packages against the engine's own `UnrealGame.exe`, which no project plugin can be added to, so the plugin is left out. Nothing reports this: the package succeeds and the built game simply has no MOVIN Live Source. If you need the plugin in a packaged build, your project has to be a C++ project - use Option 1.
 
-1. Download the zip for your Unreal Engine version from the [prebuilt release](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/prebuilt)
+1. Download the zip for your Unreal Engine version from the [prebuilt release](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/v3.0.0)
 2. Extract the zip
 3. Copy the extracted `MOVINLiveLinkPlugin` folder into your project's `Plugins/` folder
 4. Reopen the project in Unreal Editor and enable **MOVINLiveLink** if prompted
