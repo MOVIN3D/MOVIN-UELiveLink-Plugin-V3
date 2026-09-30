@@ -58,7 +58,8 @@ private:
 	void StartThread();
 
 	/** Process a fully received UDP datagram */
-	void ProcessReceivedData(const TArray<uint8>& RawData);
+	void ProcessReceivedData(const TArray<uint8>& RawData, const FInternetAddr& sender);
+	void send_status();
 
 	/** Update or create the skeleton static data for a subject. Returns true if static data was pushed (skeleton changed). */
 	bool UpdateStaticData(const FMOVINDatagram& Datagram, const FName& SubjectName);
@@ -117,10 +118,20 @@ private:
 	FString LastLoggedSourceStatusKey;
 
 	/** Raw packet validation writer, attached to the newest MOVIN Studio validation session. */
+	#if MOVIN_STREAM_VALIDATION
 	TUniquePtr<FMOVINStreamValidation> StreamValidation;
+#endif
 
 	/** Receiver FPS monitor state */
 	FCriticalSection StatsCriticalSection;
+	FMOVINFrameOrder order;
+    FString subject, signature, request, requested_sender;
+    TSharedPtr<FInternetAddr> reply_to;
+    double requested_at = 0, replied_at = 0;
+    int32 received_bones = 0, errors = 0;
+    double last_error_log = -2;
+    uint64 published_frames = 0, sampled_published = 0;
+    double published_fps = 0;
 	uint64 TotalPacketsReceived = 0;
 	uint64 LastReceiveRateSamplePackets = 0;
 	double LastPacketTimeSeconds = 0.0;
@@ -142,6 +153,8 @@ private:
 
 	/** Critical section for thread-safe access */
 	FCriticalSection CriticalSection;
+	TArray<FMOVINJointData> pending_bones;
+	FName pending_subject;
 
 	/** Global registry of active MOVIN LiveLink UDP ports */
 	static FCriticalSection ActivePortsCriticalSection;

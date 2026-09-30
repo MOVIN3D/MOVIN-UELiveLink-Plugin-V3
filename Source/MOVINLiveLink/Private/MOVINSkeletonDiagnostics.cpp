@@ -18,13 +18,6 @@
 #include "ReferenceSkeleton.h"
 #include "UObject/UObjectIterator.h"
 
-#if WITH_EDITOR
-#include "Framework/Notifications/NotificationManager.h"
-#include "Widgets/Notifications/SNotificationList.h"
-#endif
-
-#define LOCTEXT_NAMESPACE "MOVINSkeletonDiagnostics"
-
 const FName FMOVINSkeletonDiagnostics::ActorSubjectName(TEXT("MOVINMan"));
 
 namespace MOVINSkeletonDiagnosticsPrivate
@@ -41,6 +34,7 @@ namespace MOVINSkeletonDiagnosticsPrivate
 	/** The latest skeleton streamed by a subject, and what the user was last told about it. */
 	struct FTrackedSubject
 	{
+		FGuid source;
 		TArray<FName> BoneNames;
 		TArray<FVector> Translations;
 		double LastFrameTimeSeconds = 0.0;
@@ -53,6 +47,9 @@ namespace MOVINSkeletonDiagnosticsPrivate
 
 		int32 FramesObserved = 0;
 
+		// Keep identified movement bones until the source or skeleton changes, including while idle.
+		TSet<FName> world_motion_bones;
+
 		/**
 		 * Hash of the bone lengths as of the last frame, and a counter bumped whenever it changes.
 		 *
@@ -64,12 +61,8 @@ namespace MOVINSkeletonDiagnosticsPrivate
 		uint32 CalibrationHash = 0;
 		int32 CalibrationRevision = 0;
 
-		/**
-		 * Signature of the report currently on screen, per Skeletal Mesh. Keyed by mesh rather than
-		 * held as a single value because a subject can legitimately drive more than one mesh, and a
-		 * single slot would flip between them and re-notify on every scan.
-		 */
-		TMap<FString, FString> NotifiedSignatures;
+		/** Track reports per mesh so a subject driving multiple meshes does not repeat logs. */
+		TMap<FString, FString> logged_signatures;
 	};
 
 	static FCriticalSection StateCriticalSection;
@@ -78,17 +71,6 @@ namespace MOVINSkeletonDiagnosticsPrivate
 
 	/** Bumped on every calibration change, across all subjects. See GetCalibrationVersion(). */
 	static FThreadSafeCounter CalibrationVersion;
-
-	/** Identifies one subject driving one mesh - the unit a notification belongs to. */
-	static FString MakeNotificationKey(const FName& SubjectName, const FString& MeshName)
-	{
-		return SubjectName.ToString() + TEXT("|") + MeshName;
-	}
-
-#if WITH_EDITOR
-	/** Open notifications, keyed by subject and mesh. Game thread only. */
-	static TMap<FString, TSharedPtr<SNotificationItem>> ActiveNotifications;
-#endif
 
 	/** How much a bone length has to move between frames to count as having changed. */
 	static constexpr double LengthChangeToleranceCm = 0.05;
@@ -206,13 +188,11 @@ namespace MOVINSkeletonDiagnosticsPrivate
 		const int32 Count = FMath::Min(Tracked.BoneNames.Num(), Tracked.LengthChangeCounts.Num());
 
 		uint32 Hash = 0;
-		bool bAnyWorldMotion = false;
 
 		for (int32 Index = 0; Index < Count; ++Index)
 		{
-			if (FMOVINSkeletonDiagnostics::IsWorldMotionBone(Tracked.LengthChangeCounts[Index], Tracked.FramesObserved))
+			if (Tracked.world_motion_bones.Contains(Tracked.BoneNames[Index]))
 			{
-				bAnyWorldMotion = true;
 				continue;
 			}
 
@@ -225,7 +205,7 @@ namespace MOVINSkeletonDiagnosticsPrivate
 
 		// Either too few frames, or an actor who has not moved yet. Every translation still reads as
 		// a length, including the one that is a world position, so there is nothing safe to hash.
-		if (!bAnyWorldMotion)
+		if (Tracked.world_motion_bones.Num() == 0)
 		{
 			return;
 		}
@@ -233,59 +213,8 @@ namespace MOVINSkeletonDiagnosticsPrivate
 		if (Hash != Tracked.CalibrationHash)
 		{
 			Tracked.CalibrationHash = Hash;
-			CalibrationVersion.Increment();
-			++Tracked.CalibrationRevision;
+			Tracked.CalibrationRevision = CalibrationVersion.Increment();
 		}
-	}
-
-	static void DismissNotification(FString NotificationKey)
-	{
-#if WITH_EDITOR
-		TSharedPtr<SNotificationItem> Item;
-		if (ActiveNotifications.RemoveAndCopyValue(NotificationKey, Item) && Item.IsValid())
-		{
-			Item->SetExpireDuration(0.0f);
-			Item->ExpireAndFadeout();
-		}
-#endif
-	}
-
-	/**
-	 * Raise the notification and leave it up. It stays until the user dismisses it or the skeleton
-	 * changes: the offset is a standing property of the stream, not an event, so a toast that fades
-	 * after a few seconds would be missed by anyone who looked at the viewport first.
-	 */
-	static void Notify(const FName& SubjectName, const FString& MeshName, const FString& Detail)
-	{
-		UE_LOG(LogMOVINLiveLink, Display, TEXT("[Skeleton Calibration Offset] %s"), *Detail);
-
-#if WITH_EDITOR
-		const FString NotificationKey = MakeNotificationKey(SubjectName, MeshName);
-
-		// Replaces any notification already up for this subject and mesh, so a recalibration does
-		// not leave stale figures on screen next to the new ones.
-		DismissNotification(NotificationKey);
-
-		FNotificationInfo Info(FText::Format(
-			LOCTEXT("CalibrationOffsetTitle", "Skeleton Calibration Offset - '{0}'"),
-			FText::FromName(SubjectName)));
-		Info.SubText = FText::FromString(Detail);
-		Info.bFireAndForget = false;
-		Info.bUseThrobber = false;
-		Info.bUseSuccessFailIcons = false;
-		Info.ButtonDetails.Add(FNotificationButtonInfo(
-			LOCTEXT("CalibrationOffsetDismiss", "Dismiss"),
-			LOCTEXT("CalibrationOffsetDismissTooltip", "Hide this message until the streamed skeleton changes."),
-			FSimpleDelegate::CreateLambda([NotificationKey]() { DismissNotification(NotificationKey); }),
-			SNotificationItem::CS_None));
-
-		TSharedPtr<SNotificationItem> Item = FSlateNotificationManager::Get().AddNotification(Info);
-		if (Item.IsValid())
-		{
-			Item->SetCompletionState(SNotificationItem::CS_None);
-			ActiveNotifications.Add(NotificationKey, Item);
-		}
-#endif
 	}
 }
 
@@ -360,7 +289,7 @@ FMOVINSkeletonDeviationReport FMOVINSkeletonDiagnostics::CompareBoneLengths(
 	// An actor's left and right sides calibrate to figures that agree to two decimals and differ
 	// only in the far ones, and TArray::Sort is not stable, so comparing raw floats let Left/Right
 	// pairs swap places between scans. Nothing the user could see had changed, but the ordering had,
-	// which was enough to look like a new report and re-raise the notification every two seconds.
+	// which was enough to look like a new report and repeat the log every two seconds.
 	Report.Deviations.Sort([](const FMOVINBoneLengthDeviation& A, const FMOVINBoneLengthDeviation& B)
 	{
 		const int32 MagnitudeA = FMath::RoundToInt(A.Magnitude() * 100.0f);
@@ -465,7 +394,7 @@ FString FMOVINSkeletonDiagnostics::BuildReportSignature(const FString& MeshName,
 	return MeshName + TEXT("|") + FString::Join(Entries, TEXT("|"));
 }
 
-void FMOVINSkeletonDiagnostics::NoteSkeleton(const FName& SubjectName, const TArray<FMOVINJointData>& Bones)
+void FMOVINSkeletonDiagnostics::NoteSkeleton(const FGuid& source, const FName& SubjectName, const TArray<FMOVINJointData>& Bones)
 {
 	using namespace MOVINSkeletonDiagnosticsPrivate;
 
@@ -478,6 +407,10 @@ void FMOVINSkeletonDiagnostics::NoteSkeleton(const FName& SubjectName, const TAr
 	FScopeLock Lock(&StateCriticalSection);
 
 	FTrackedSubject& Tracked = TrackedSubjects.FindOrAdd(SubjectName);
+	if (Tracked.source != source) {
+		Tracked = FTrackedSubject();
+		Tracked.source = source;
+	}
 
 	// A different bone list is a different skeleton; the movement counts collected for the old one
 	// mean nothing for the new one.
@@ -506,7 +439,8 @@ void FMOVINSkeletonDiagnostics::NoteSkeleton(const FName& SubjectName, const TAr
 		Tracked.PreviousLengths.Reset();
 		Tracked.PreviousLengths.AddZeroed(Bones.Num());
 		Tracked.FramesObserved = 0;
-		Tracked.NotifiedSignatures.Empty();
+		Tracked.world_motion_bones.Reset();
+		Tracked.logged_signatures.Empty();
 	}
 
 	// Reset() keeps the allocation, so this is a copy into existing storage after the first frame.
@@ -523,6 +457,9 @@ void FMOVINSkeletonDiagnostics::NoteSkeleton(const FName& SubjectName, const TAr
 			++Tracked.LengthChangeCounts[Index];
 		}
 		Tracked.PreviousLengths[Index] = Length;
+		if (IsWorldMotionBone(Tracked.LengthChangeCounts[Index], Tracked.FramesObserved + 1)) {
+			Tracked.world_motion_bones.Add(Bones[Index].BoneName);
+		}
 	}
 
 	++Tracked.FramesObserved;
@@ -542,7 +479,7 @@ void FMOVINSkeletonDiagnostics::Tick()
 	{
 		FScopeLock Lock(&StateCriticalSection);
 
-		if (TrackedSubjects.Num() == 0 || (Now - LastScanTimeSeconds) < ScanIntervalSeconds)
+		if ((Now - LastScanTimeSeconds) < ScanIntervalSeconds)
 		{
 			return;
 		}
@@ -550,22 +487,16 @@ void FMOVINSkeletonDiagnostics::Tick()
 
 		for (const TPair<FName, FTrackedSubject>& Pair : TrackedSubjects)
 		{
-			// Only subjects that are still streaming, and only once enough frames have been seen to
-			// tell a moving pelvis apart from a static bone length.
+			// Do not compare pelvis positions before world movement has been identified.
 			if ((Now - Pair.Value.LastFrameTimeSeconds) <= StaleFrameSeconds &&
-				Pair.Value.FramesObserved >= MinFramesForMotionCheck)
+				Pair.Value.world_motion_bones.Num() > 0)
 			{
 				SubjectsToScan.Add(Pair.Key, Pair.Value);
 			}
 		}
 	}
 
-	if (SubjectsToScan.Num() == 0)
-	{
-		return;
-	}
-
-	for (TObjectIterator<USkeletalMeshComponent> It; It; ++It)
+	for (TObjectIterator<USkeletalMeshComponent> It; It && SubjectsToScan.Num() > 0; ++It)
 	{
 		USkeletalMeshComponent* Component = *It;
 		if (!FMOVINSkeletonDiagnostics::IsComponentInLiveWorld(Component))
@@ -604,8 +535,7 @@ void FMOVINSkeletonDiagnostics::Tick()
 				RefBone.ParentIndex = BoneInfos[BoneIndex].ParentIndex;
 			}
 
-			const TSet<FName> WorldMotionBones = FindWorldMotionBones(
-				Pair.Value.BoneNames, Pair.Value.LengthChangeCounts, Pair.Value.FramesObserved);
+			const auto& WorldMotionBones = Pair.Value.world_motion_bones;
 
 			const FMOVINSkeletonDeviationReport Report = CompareBoneLengths(
 				RefBones, Pair.Value.BoneNames, Pair.Value.Translations, WorldMotionBones);
@@ -613,9 +543,7 @@ void FMOVINSkeletonDiagnostics::Tick()
 			const FString MeshName = SkinnedAsset->GetName();
 			const FString Signature = BuildReportSignature(MeshName, Report);
 
-			// Say it once per mesh. The scan repeats for as long as the subject streams, so this is
-			// what keeps a standing offset from re-raising the notification every couple of
-			// seconds - and what makes a genuine recalibration raise it again.
+			// Log each mesh again only when its report changes.
 			{
 				FScopeLock Lock(&StateCriticalSection);
 				FTrackedSubject* Tracked = TrackedSubjects.Find(Pair.Key);
@@ -623,12 +551,12 @@ void FMOVINSkeletonDiagnostics::Tick()
 				{
 					continue;
 				}
-				FString& NotifiedSignature = Tracked->NotifiedSignatures.FindOrAdd(MeshName);
-				if (NotifiedSignature == Signature)
+				auto& logged_signature = Tracked->logged_signatures.FindOrAdd(MeshName);
+				if (logged_signature == Signature)
 				{
 					continue;
 				}
-				NotifiedSignature = Signature;
+				logged_signature = Signature;
 			}
 
 			// If this message ever starts repeating again, this is the line that says why: a bone
@@ -650,7 +578,8 @@ void FMOVINSkeletonDiagnostics::Tick()
 
 			if (Report.HasDeviation())
 			{
-				Notify(Pair.Key, MeshName, FormatReport(Pair.Key, MeshName, Report));
+				UE_LOG(LogMOVINLiveLink, Display, TEXT("[Skeleton Calibration Offset] %s"),
+					*FormatReport(Pair.Key, MeshName, Report));
 			}
 			else
 			{
@@ -666,22 +595,17 @@ void FMOVINSkeletonDiagnostics::Reset()
 {
 	using namespace MOVINSkeletonDiagnosticsPrivate;
 
-#if WITH_EDITOR
-	if (IsInGameThread())
-	{
-		TArray<FString> OpenNotifications;
-		ActiveNotifications.GetKeys(OpenNotifications);
-		for (const FString& NotificationKey : OpenNotifications)
-		{
-			DismissNotification(NotificationKey);
-		}
-	}
-	ActiveNotifications.Empty();
-#endif
-
 	FScopeLock Lock(&StateCriticalSection);
 	TrackedSubjects.Empty();
 	LastScanTimeSeconds = 0.0;
+}
+
+void FMOVINSkeletonDiagnostics::forget_source(const FGuid& source) {
+	using namespace MOVINSkeletonDiagnosticsPrivate;
+	FScopeLock lock(&StateCriticalSection);
+	for (auto i = TrackedSubjects.CreateIterator(); i; ++i) {
+		if (i.Value().source == source) { i.RemoveCurrent(); }
+	}
 }
 
 void FMOVINSkeletonDiagnostics::GetTrackedSubjects(TArray<FName>& OutSubjects)
@@ -701,17 +625,14 @@ bool FMOVINSkeletonDiagnostics::GetStreamedSkeleton(const FName& SubjectName, FM
 	FScopeLock Lock(&StateCriticalSection);
 
 	const FTrackedSubject* Tracked = TrackedSubjects.Find(SubjectName);
-	if (Tracked == nullptr || Tracked->BoneNames.Num() == 0)
+	if (Tracked == nullptr || Tracked->BoneNames.Num() == 0 || FPlatformTime::Seconds() - Tracked->LastFrameTimeSeconds >= 1)
 	{
 		return false;
 	}
 
 	OutSkeleton.BoneNames = Tracked->BoneNames;
 	OutSkeleton.LocalTranslations = Tracked->Translations;
-	OutSkeleton.WorldMotionBones = FindWorldMotionBones(
-		Tracked->BoneNames,
-		Tracked->LengthChangeCounts,
-		Tracked->FramesObserved);
+	OutSkeleton.WorldMotionBones = Tracked->world_motion_bones;
 	OutSkeleton.CalibrationRevision = Tracked->CalibrationRevision;
 
 	// Refusing to answer until a bone has actually been seen carrying world movement is the
@@ -762,5 +683,3 @@ int32 FMOVINSkeletonDiagnostics::GetCalibrationVersion()
 
 	return CalibrationVersion.GetValue();
 }
-
-#undef LOCTEXT_NAMESPACE

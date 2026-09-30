@@ -1,16 +1,19 @@
-# MOVIN LiveLink Plugin v3.0.0 for UE5
+# MOVIN LiveLink Plugin v3.3.0 for UE5
 
 Receives real-time motion capture data from MOVIN Studio via UDP and feeds it into Unreal Engine's [LiveLink](https://dev.epicgames.com/documentation/en-us/unreal-engine/live-link-in-unreal-engine) system.
 
-## Version compatibility
+## Which version do I need?
 
-This is the legacy release recommended for MOVIN Studio **v3.0.0 through v3.2.0**.
-For Studio v3.3.0 or later, use [plugin v3.3.0](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/v3.3.0).
+| MOVIN Studio | Recommended plugin | Download |
+|---|---|---|
+| v3.3.0 or later | v3.3.0 | [v3.3.0](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/v3.3.0) |
+| v3.0.0 through v3.2.0 | v3.0.0 | [v3.0.0](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/v3.0.0) |
 
-Plugin v3.0.0 is the former v1.1.0 release with updated version labels, package names and documentation.
-Its runtime binaries and streaming behavior are unchanged. The original
-[v1.1.0 release](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/v1.1.0) remains available.
-This legacy version does not provide the Studio connection and LiveLink FPS status display.
+Plugin versions follow the recommended Studio release family. A plugin-only fix such as v3.3.1
+does not require Studio v3.3.1. The Unreal motion format retains compatibility with older ASCII
+streams; the connection and LiveLink FPS display requires Studio v3.3.0 and plugin v3.3.0 or later.
+Plugin v3.0.0 is the former v1.1.0 release with updated version labels and unchanged runtime binaries.
+The original [v1.1.0 release](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/v1.1.0) remains available.
 
 ## Features
 
@@ -19,7 +22,8 @@ This legacy version does not provide the Studio connection and LiveLink FPS stat
 - Detects skeleton changes when you switch characters
 - Supports multiple characters, one MOVIN Studio instance and UDP port each
 - Works in both the **Editor** and **Packaged Games**
-- Configurable UDP port (default `11236`)
+- Configurable IPv4 UDP port (default `11236`, range `1-65535`)
+- Reports connection and LiveLink FPS to MOVIN Studio v3.3.0+ (plugin v3.3.0+)
 
 ## Requirements
 
@@ -27,7 +31,7 @@ This legacy version does not provide the Studio connection and LiveLink FPS stat
 |---|---|
 | Engine | Unreal Engine **5.3 - 5.8** |
 | Platform | Windows 64-bit |
-| Capture | MOVIN Studio **v3.0.0+** |
+| Capture | MOVIN Studio **v3.3.0+** recommended; see the version table above for older Studio releases |
 | Network | MOVIN Studio and Unreal on the same network |
 | Project | A **C++ project** for Option 1; any project, including **Blueprint-only**, for Option 2. Shipping a packaged game needs the C++ project either way - see Option 2 |
 
@@ -71,14 +75,41 @@ A Blueprint-only project cannot compile the plugin, so use a prebuilt package in
 
 > **This route cannot ship a packaged game.** A Blueprint-only project packages against the engine's own `UnrealGame.exe`, which no project plugin can be added to, so the plugin is left out. Nothing reports this: the package succeeds and the built game simply has no MOVIN Live Source. If you need the plugin in a packaged build, your project has to be a C++ project - use Option 1.
 
-1. Download the zip for your Unreal Engine version from the [prebuilt release](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/v3.0.0)
+1. Download the zip for your Unreal Engine version from the [v3.3.0 release](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/v3.3.0), or use the version table above for an older Studio release
 2. Extract the zip
 3. Copy the extracted `MOVINLiveLinkPlugin` folder into your project's `Plugins/` folder
 4. Reopen the project in Unreal Editor and enable **MOVINLiveLink** if prompted
 
 The folder name does not have to match Option 1's. What matters is that `MOVINLiveLink.uplugin` sits directly inside it.
 
-Packages cover Unreal Engine 5.3 - 5.8 on Windows 64-bit and are built from the current source. Debug symbols (`.pdb`) are not included.
+Packages cover Unreal Engine 5.3 - 5.8 on Windows 64-bit. Use the package matching your engine minor version. A published package contains the source for its release, which can differ from the current branch. Debug symbols (`.pdb`), internal stream validation and automation test sources are not included.
+
+## Streaming status in Studio
+
+With Studio v3.3.0+ and plugin v3.3.0+, the streaming message panel shows:
+
+```text
+Unreal LiveLink: connected
+
+Source: MOVINMan | 55 Bones
+
+LiveLink FPS: 60.0 fps
+```
+
+`connected` means the plugin has replied within the last 3 seconds. `Source` shows the character
+Studio is sending and its bone count after hand filtering and Blender Armature omission.
+LiveLink FPS is the rate of frames submitted to LiveLink: 57 FPS or above is green, below 57 is red.
+It does not measure final character application or rendering. Unavailable or stale values are `-`.
+Streaming errors appear above these lines with an explanation of how to resolve them.
+
+Allow Studio's reply port **UDP 39581** as well as Unreal's motion port (default **UDP 11236**)
+on the local network. A missing status reply does not stop the motion stream. Earlier plugins
+can still receive compatible motion packets but do not answer these status requests.
+
+Each source accepts one sender at a time. Duplicate/out-of-order frames are ignored; after one
+second without an accepted motion frame, a restarted frame counter or a new sender can take over.
+For simultaneous characters, use distinct ports and Subject names. If two sources share a Subject
+name, LiveLink's enabled source determines which one drives animation and Actor calibration.
 
 ## Quick Start
 
@@ -116,7 +147,7 @@ Both machines have to be on the same network. The same router or Wi-Fi is enough
 
 Start streaming from MOVIN Studio. A subject appears in the LiveLink panel, usually `MOVINMan` for an Actor stream. **Write the name down** - later steps need it exactly.
 
-The status column reports the receive rate. Expected is `60 fps`; below `55` shows as a warning and below `50` as critical.
+The status column reports the receive rate. Expected is `60 fps`; below `57` shows as a warning and below `50` as critical.
 
 > **If no subject appears, stop here.** Check the UDP port through your firewall, the **Streaming Host** IP in MOVIN Studio, and that both machines are on the same network. Nothing further will work until a subject shows up.
 
@@ -251,12 +282,8 @@ Place your character in the level and start streaming. To preview in the editor 
 
 MOVIN Studio calibrates the skeleton to each actor's body, so an Actor stream carries bone lengths that belong to the actor rather than to the `MOVINman_V3_Puppet_UE` mesh. Those lengths are applied verbatim, which is what keeps the motion data intact - but it means joints whose calibrated length differs from the mesh visibly change shape. A shortened upper arm, for example, pulls the forearm up into it and the elbow appears to bulge.
 
-The plugin reports the figures in an editor notification and in the Output Log:
-
-```
-Skeleton Calibration Offset - 'MOVINMan'
-Head 1.63x, Neck 1.49x, Spine 0.62x, Arm 0.87x.
-```
+Bone-length differences are recorded in the Output Log as `[Skeleton Calibration Offset]`.
+No editor popup is shown for these expected differences.
 
 **If you are retargeting (path C), there is nothing for you to do about this.** Once a subject has streamed enough frames to be calibrated - roughly half a second, and the actor has to have moved - the plugin gives the source component a copy of its mesh whose reference pose carries the actor's bone lengths, so every measurement the retargeter takes is correct for that actor. No scale factor to tune, no changes to your IK Rig or IK Retargeter, and the mesh asset on disk is never modified. A recalibration, including the brief one MOVIN Studio performs when a stream reconnects, is picked up on the next frame.
 
@@ -362,7 +389,9 @@ Key events:
 ## Reference
 
 - [Retargeting an Actor Stream onto a MetaHuman](docs/metahuman-retargeting.md) - full walkthrough for that character
-- [UDP Packet Format](docs/protocol.md) - wire format, for writing a sender or debugging at the packet level
+- [UDP Packet Format](docs/protocol.md) - motion and status protocols
+- [Development and packaging](docs/development.md) - builds, tests and internal validation
+- [Changelog](CHANGELOG.md)
 
 ## License
 

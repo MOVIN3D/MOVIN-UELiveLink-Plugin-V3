@@ -1,3 +1,4 @@
+#if MOVIN_STREAM_VALIDATION
 // Copyright 2025 MOVIN. All Rights Reserved.
 
 #pragma once
@@ -54,3 +55,5 @@ private:
 	/** Last time the validation directory was scanned for the active _App file. */
 	FDateTime LastAttachScanUtc;
 };
+
+#endif

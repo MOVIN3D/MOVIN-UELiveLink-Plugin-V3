@@ -28,12 +28,13 @@ TSharedPtr<ILiveLinkSource> UMOVINLiveLinkSourceFactory::CreateSource(const FStr
 	int32 PortValue = 11236; // default
 	TArray<FString> Parsed;
 	ConnectionString.ParseIntoArray(Parsed, TEXT("="));
+	if (Parsed.Num() != 2 || Parsed[0] != TEXT("Port") || Parsed[1].Len() > 5 || !Parsed[1].IsNumeric()) { return nullptr; }
 	if (Parsed.Num() == 2)
 	{
 		PortValue = FCString::Atoi(*Parsed[1]);
 	}
 
-	if (FMOVINLiveLinkSource::IsPortInUse(PortValue))
+	if (PortValue < 1 || PortValue > 65535 || FMOVINLiveLinkSource::IsPortInUse(PortValue))
 	{
 		return nullptr;
 	}

@@ -10,6 +10,7 @@
 struct FMOVINJointData
 {
 	FName BoneName;
+	FString wire_name;
 	FVector LocalPosition;
 	FQuat LocalRotation;
 	FVector LocalScale;
@@ -92,4 +93,11 @@ private:
 
 	/** Helper: read a length-prefixed UTF-8 string (7-bit encoded length + N bytes, C# BinaryWriter format) */
 	static bool ReadString(const uint8* Data, int32 DataLen, int32& Offset, FString& OutString);
+};
+
+struct FMOVINFrameOrder {
+    int32 frame = -1;
+    double accepted_at = -1;
+    FString sender;
+    bool accept(int32 next, const FString& endpoint, double now);
 };

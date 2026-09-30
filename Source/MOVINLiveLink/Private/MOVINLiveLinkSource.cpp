@@ -4,8 +4,13 @@
 #include "MOVINLiveLinkModule.h"
 #include "MOVINActorMesh.h"
 #include "MOVINSkeletonDiagnostics.h"
+#if MOVIN_STREAM_VALIDATION
 #include "MOVINStreamValidation.h"
+#endif
+#include "MOVINStreamStatus.h"
+#if MOVIN_STREAM_VALIDATION
 #include "MOVINValidationProtocol.h"
+#endif
 #include "ILiveLinkClient.h"
 #include "Roles/LiveLinkAnimationRole.h"
 #include "Templates/Atomic.h"
@@ -16,7 +21,7 @@ FCriticalSection FMOVINLiveLinkSource::ActivePortsCriticalSection;
 TSet<int32> FMOVINLiveLinkSource::ActivePorts;
 static TAtomic<int32> GMOVINLiveLinkThreadCounter(0);
 static constexpr double GMOVINExpectedReceiveFps = 60.0;
-static constexpr double GMOVINReceiveFpsWarning = 55.0;
+static constexpr double GMOVINReceiveFpsWarning = 57.0;
 static constexpr double GMOVINReceiveFpsCritical = 50.0;
 static FCriticalSection GMOVINInvalidDatagramLogCriticalSection;
 static double GMOVINLastInvalidDatagramLogTimeSeconds = 0.0;
@@ -26,7 +31,9 @@ FMOVINLiveLinkSource::FMOVINLiveLinkSource(int32 InPort)
 	, bStopping(false)
 	, WaitTime(FTimespan::FromMilliseconds(100))
 	, SourceStatus(LOCTEXT("SourceStatus_NotConnected", "Not Connected"))
+#if MOVIN_STREAM_VALIDATION
 	, StreamValidation(MakeUnique<FMOVINStreamValidation>())
+#endif
 {
 	bPortRegistered = TryRegisterPort(Port);
 	if (!bPortRegistered)
@@ -73,7 +80,7 @@ bool FMOVINLiveLinkSource::IsPortInUse(int32 InPort)
 bool FMOVINLiveLinkSource::TryRegisterPort(int32 InPort)
 {
 	FScopeLock Lock(&ActivePortsCriticalSection);
-	if (ActivePorts.Contains(InPort))
+	if (InPort < 1 || InPort > 65535 || ActivePorts.Contains(InPort))
 	{
 		return false;
 	}
@@ -90,8 +97,8 @@ void FMOVINLiveLinkSource::UnregisterPort(int32 InPort)
 
 void FMOVINLiveLinkSource::ReceiveClient(ILiveLinkClient* InClient, FGuid InSourceGuid)
 {
-	UnregisterClientDelegates();
-
+	check(Client == nullptr && Thread == nullptr && Socket == nullptr);
+	check(InClient != nullptr);
 	Client = InClient;
 	SourceGuid = InSourceGuid;
 	if (Client != nullptr)
@@ -111,7 +118,6 @@ void FMOVINLiveLinkSource::ReceiveClient(ILiveLinkClient* InClient, FGuid InSour
 
 	Socket = FUdpSocketBuilder(TEXT("MOVINLiveLinkSocket"))
 		.AsNonBlocking()
-		.AsReusable()
 		.BoundToEndpoint(Endpoint)
 		.WithReceiveBufferSize(BufferSize);
 
@@ -160,17 +166,29 @@ FText FMOVINLiveLinkSource::GetSourceMachineName() const
 
 void FMOVINLiveLinkSource::Update()
 {
-	if (StreamValidation)
-	{
-		StreamValidation->Tick();
-	}
+#if MOVIN_STREAM_VALIDATION
+	if (StreamValidation) { StreamValidation->Tick(); }
+#endif
 
 	if (bPortRegistered && Socket != nullptr && !bStopping)
 	{
 		UpdateReceiveStatus();
+		send_status();
 	}
 
 	// Deferred here because the scan walks Skeletal Mesh components, which is game thread only.
+	TArray<FMOVINJointData> bones;
+	FName name;
+	{
+		FScopeLock lock(&CriticalSection);
+		bones = MoveTemp(pending_bones);
+		pending_bones.Empty();
+		name = pending_subject;
+	}
+	// Subject selection is game-thread-only on older supported engine versions.
+	if (!bones.IsEmpty() && Client->IsSubjectEnabled(FLiveLinkSubjectKey(SourceGuid, name), false)) {
+		FMOVINSkeletonDiagnostics::NoteSkeleton(SourceGuid, name, bones);
+	}
 	FMOVINSkeletonDiagnostics::Tick();
 
 	// Same deferral, and it has to run after the diagnostics tick: the fit reads the calibration the
@@ -190,6 +208,10 @@ void FMOVINLiveLinkSource::StartThread()
 	FString ThreadName = TEXT("MOVINLiveLink UDP Receiver ");
 	ThreadName.AppendInt(++GMOVINLiveLinkThreadCounter);
 	Thread = FRunnableThread::Create(this, *ThreadName, 128 * 1024, TPri_AboveNormal, FPlatformAffinity::GetPoolThreadMask());
+    if (Thread == nullptr) {
+        UE_LOG(LogMOVINLiveLink, Error, TEXT("Could not start receiver thread on port %d"), Port);
+        Stop();
+    }
 }
 
 uint32 FMOVINLiveLinkSource::Run()
@@ -204,7 +226,7 @@ uint32 FMOVINLiveLinkSource::Run()
 		}
 
 		uint32 PendingDataSize;
-		while (Socket->HasPendingData(PendingDataSize))
+		while (!bStopping && Socket->HasPendingData(PendingDataSize))
 		{
 			TArray<uint8> RecvBuffer;
 			RecvBuffer.SetNumUninitialized(FMath::Min(PendingDataSize, 65507u));
@@ -215,8 +237,7 @@ uint32 FMOVINLiveLinkSource::Run()
 				if (BytesRead > 0)
 				{
 					RecvBuffer.SetNum(BytesRead);
-					NotePacketReceived();
-					ProcessReceivedData(RecvBuffer);
+					ProcessReceivedData(RecvBuffer, *Sender);
 				}
 			}
 		}
@@ -231,15 +252,22 @@ void FMOVINLiveLinkSource::Stop()
 
 	bStopping = true;
 
-	if (Socket != nullptr)
-	{
-		Socket->Close();
-	}
-
-	if (StreamValidation)
-	{
-		StreamValidation->Close();
-	}
+    if (Thread != nullptr) {
+        auto* thread = Thread;
+        // FRunnableThread's destructor calls Stop() again.
+        Thread = nullptr;
+        thread->WaitForCompletion();
+        delete thread;
+    }
+    if (Socket != nullptr) { Socket->Close(); }
+    FMOVINSkeletonDiagnostics::forget_source(SourceGuid);
+    if (bPortRegistered) {
+        UnregisterPort(Port);
+        bPortRegistered = false;
+    }
+#if MOVIN_STREAM_VALIDATION
+    if (StreamValidation) { StreamValidation->Close(); }
+#endif
 }
 
 void FMOVINLiveLinkSource::NotePacketReceived()
@@ -344,6 +372,8 @@ void FMOVINLiveLinkSource::UpdateReceiveStatus()
 				ReceiveFps = static_cast<double>(PacketCount - LastReceiveRateSamplePackets) / DeltaSeconds;
 				LastReceiveRateSampleTimeSeconds = Now;
 				LastReceiveRateSamplePackets = PacketCount;
+                published_fps = static_cast<double>(published_frames - sampled_published) / DeltaSeconds;
+                sampled_published = published_frames;
 				bHasReceiveRateSample = true;
 			}
 		}
@@ -398,15 +428,34 @@ void FMOVINLiveLinkSource::UpdateReceiveStatus()
 
 // Data processing
 
-void FMOVINLiveLinkSource::ProcessReceivedData(const TArray<uint8>& RawData)
+void FMOVINLiveLinkSource::ProcessReceivedData(const TArray<uint8>& RawData, const FInternetAddr& sender)
 {
+    const double now = FPlatformTime::Seconds();
+    FString token;
+    int32 reply_port = 0, motion_port = 0;
+    if (MOVINStreamStatus::read_request(RawData, token, reply_port, motion_port)) {
+        FScopeLock lock(&StatsCriticalSection);
+        request = token;
+        reply_to = sender.Clone();
+        reply_to->SetPort(motion_port);
+        requested_sender = reply_to->ToString(true);
+        reply_to->SetPort(reply_port);
+        requested_at = now;
+        return;
+    }
 	FMOVINDatagram Datagram;
 	if (!FMOVINDatagramParser::Parse(RawData, Datagram))
 	{
-		UE_LOG(LogMOVINLiveLink, Warning, TEXT("Failed to parse incoming UDP datagram (%d bytes)"), RawData.Num());
+        FScopeLock lock(&StatsCriticalSection);
+        errors = FMath::Min(errors, MAX_int32 - 1) + 1;
+        if (now - last_error_log >= 2) {
+            last_error_log = now;
+            UE_LOG(LogMOVINLiveLink, Warning, TEXT("Rejected invalid UDP datagram (%d bytes); total errors: %d"), RawData.Num(), errors);
+        }
 		return;
 	}
 
+#if MOVIN_STREAM_VALIDATION
 	if (Datagram.bIsValidationControl)
 	{
 		if (StreamValidation)
@@ -433,6 +482,7 @@ void FMOVINLiveLinkSource::ProcessReceivedData(const TArray<uint8>& RawData)
 		StreamValidation->WriteRawPacket(RawData);
 	}
 
+#endif
 	const int32 ParsedBoneCount = Datagram.Bones.Num();
 	if (!Datagram.bIsValid || Datagram.BoneCount <= 0 || ParsedBoneCount <= 0 || ParsedBoneCount != Datagram.BoneCount)
 	{
@@ -456,6 +506,27 @@ void FMOVINLiveLinkSource::ProcessReceivedData(const TArray<uint8>& RawData)
 		return;
 	}
 
+    FString previous;
+    {
+        FScopeLock lock(&StatsCriticalSection);
+        const int32 frame = Datagram.FrameIndex < 0 ? -(Datagram.FrameIndex + 1) : Datagram.FrameIndex;
+        if (!order.accept(frame, sender.ToString(true), now)) { return; }
+        previous = subject;
+        subject = Datagram.SubjectName;
+        received_bones = Datagram.BoneCount;
+        signature = MOVINStreamStatus::bone_signature(Datagram.Bones);
+    }
+    NotePacketReceived();
+    if (!previous.IsEmpty() && !previous.Equals(Datagram.SubjectName, ESearchCase::IgnoreCase)) {
+        FMOVINSkeletonDiagnostics::forget_source(SourceGuid);
+        {
+            FScopeLock lock(&CriticalSection);
+            SubjectBoneCounts.Empty(); SubjectBoneNames.Empty();
+            SubjectSkeletonRevisions.Empty(); SubjectSkeletonReady.Empty();
+            pending_bones.Empty();
+        }
+        Client->RemoveSubject_AnyThread(FLiveLinkSubjectKey(SourceGuid, FName(*previous)));
+    }
 	// Use SubjectName from the packet directly as the LiveLink subject name
 	const FName SubjectName(*Datagram.SubjectName);
 	const FLiveLinkSubjectKey SubjectKey(SourceGuid, SubjectName);
@@ -502,7 +573,11 @@ void FMOVINLiveLinkSource::ProcessReceivedData(const TArray<uint8>& RawData)
 	// Watches the streamed bone lengths for the calibration offset. Called per frame rather than
 	// only on static data because a recalibration keeps the same bone names, so it would not
 	// otherwise be noticed.
-	FMOVINSkeletonDiagnostics::NoteSkeleton(SubjectName, Datagram.Bones);
+	if (FMOVINSkeletonDiagnostics::IsActorSubject(SubjectName)) {
+		FScopeLock lock(&CriticalSection);
+		pending_subject = SubjectName;
+		pending_bones = Datagram.Bones;
+	}
 
 	FLiveLinkFrameDataStruct FrameData(FLiveLinkAnimationFrameData::StaticStruct());
 	FLiveLinkAnimationFrameData& AnimFrameData = *FrameData.Cast<FLiveLinkAnimationFrameData>();
@@ -518,7 +593,9 @@ void FMOVINLiveLinkSource::ProcessReceivedData(const TArray<uint8>& RawData)
 		Transforms.Add(Transform);
 	}
 
+	AnimFrameData.WorldTime = FLiveLinkWorldTime(now);
 	Client->PushSubjectFrameData_AnyThread(SubjectKey, MoveTemp(FrameData));
+    { FScopeLock lock(&StatsCriticalSection); ++published_frames; }
 }
 
 bool FMOVINLiveLinkSource::UpdateStaticData(const FMOVINDatagram& Datagram, const FName& SubjectName)
@@ -617,6 +694,29 @@ bool FMOVINLiveLinkSource::UpdateStaticData(const FMOVINDatagram& Datagram, cons
 	}
 
 	return true;
+}
+
+void FMOVINLiveLinkSource::send_status() {
+    TSharedPtr<FInternetAddr> endpoint;
+    TArray<uint8> bytes;
+    const double now = FPlatformTime::Seconds();
+    {
+        FScopeLock lock(&StatsCriticalSection);
+        if (request.IsEmpty() || now - replied_at < 0.25) { return; }
+        const FString token = MoveTemp(request);
+        request.Empty();
+        if (now - requested_at > 3) { return; }
+        endpoint = reply_to;
+        const float age = order.accepted_at < 0 ? -1.f : float(now - order.accepted_at);
+        bytes = MOVINStreamStatus::reply(token, subject, order.frame, received_bones,
+            age >= 0 && age < 1 ? ReceiveFps : 0, age >= 0 && age < 1 ? published_fps : 0,
+            age, errors, signature, order.sender == requested_sender);
+        replied_at = now;
+    }
+    int32 sent = 0;
+    if (!Socket->SendTo(bytes.GetData(), bytes.Num(), sent, *endpoint) || sent != bytes.Num()) {
+        UE_LOG(LogMOVINLiveLink, Warning, TEXT("Failed to send Studio status reply"));
+    }
 }
 
 #undef LOCTEXT_NAMESPACE

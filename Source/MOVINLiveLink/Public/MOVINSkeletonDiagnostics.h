@@ -133,10 +133,10 @@ public:
 	 * bone's length changes separates the two without knowing anything about the rig, which matters
 	 * because the answer differs between MOVIN Studio's streamed skeleton and however the target
 	 * .fbx happened to import. Inferring it from the hierarchy instead is what previously let the
-	 * pelvis into the report and made the notification re-fire every couple of seconds.
+	 * pelvis into the report and made it repeat every couple of seconds.
 	 *
 	 * A recalibration changes a length once and then holds it, so it does not look like movement and
-	 * correctly re-raises the notification instead of silencing the bone.
+	 * produces a new report instead of silencing the bone.
 	 *
 	 * @param LengthChangeCounts  Per bone, how many frames its length differed from the previous one
 	 * @param FramesObserved      Frames counted so far; too few and nothing can be concluded yet
@@ -166,24 +166,25 @@ public:
 	static FString FormatReport(const FName& SubjectName, const FString& MeshName, const FMOVINSkeletonDeviationReport& Report);
 
 	/**
-	 * Identity of what a report would put on screen, used to decide whether the notification needs
-	 * raising again.
+	 * Identity of the reported figures, used to avoid duplicate log entries.
 	 *
 	 * Deliberately built from the displayed figures rather than the raw stream: the pelvis
 	 * translation is world movement and changes every frame, so anything derived from raw
 	 * translations would read as a fresh recalibration on every packet. Ratios are rounded to the
-	 * precision the message shows, so jitter below what the user can see does not re-notify either.
+	 * precision the message shows, so smaller jitter does not produce another log entry.
 	 */
 	static FString BuildReportSignature(const FString& MeshName, const FMOVINSkeletonDeviationReport& Report);
 
 	/**
 	 * Record the skeleton carried by a frame. Called for every frame; keeps the latest snapshot for
 	 * the game thread to evaluate. Safe to call from the receiver thread.
+	 * Identified world-motion bones stay excluded until the source or bone list changes.
 	 */
-	static void NoteSkeleton(const FName& SubjectName, const TArray<FMOVINJointData>& Bones);
+	static void NoteSkeleton(const FGuid& source, const FName& SubjectName, const TArray<FMOVINJointData>& Bones);
+	static void forget_source(const FGuid& source);
 
 	/**
-	 * Look for a Skeletal Mesh driven by a tracked subject and raise the notification if what it
+	 * Look for a Skeletal Mesh driven by a tracked subject and log a report if what it
 	 * would say has changed. Must be called on the game thread. Cheap to call every frame;
 	 * internally rate limited.
 	 */
@@ -229,6 +230,6 @@ public:
 	 */
 	static int32 GetCalibrationVersion();
 
-	/** Dismiss any open notification and forget every tracked subject. */
+	/** Forget every tracked subject. */
 	static void Reset();
 };

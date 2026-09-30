@@ -257,7 +257,7 @@ bool FMOVINSkeletonSymmetricBonesTest::RunTest(const FString& Parameters)
 	// A real actor calibrates left and right to figures that agree to two decimals and differ
 	// only in the far ones. TArray::Sort is not stable, so ranking on the raw floats let those pairs
 	// swap places between scans - identical bones, identical printed ratios, different order. That
-	// was enough to look like a new report and re-raise the notification every two seconds.
+	// was enough to look like a new report and repeat the log every two seconds.
 	auto Bone = [](const TCHAR* Name, int32 ParentIndex, double Length)
 	{
 		FMOVINRefPoseBone Out;
@@ -319,7 +319,7 @@ bool FMOVINSkeletonWorldMotionDetectionTest::RunTest(const FString& Parameters)
 	// because the shape of the rig is not reliable: MOVIN Studio's skeleton and the imported .fbx
 	// disagree about whether there is a root bone above the pelvis. Getting this wrong let the
 	// pelvis into the report, and since its "length" is a world position it changed on every scan,
-	// which is what made the notification fire again and again.
+	// which is what made the report repeat again and again.
 	const TArray<FName> BoneNames = { TEXT("Hips"), TEXT("Spine"), TEXT("Neck"), TEXT("Head") };
 	const int32 FramesObserved = 600;
 
@@ -376,7 +376,7 @@ bool FMOVINSkeletonPelvisRootedRigTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Spine is reported on a pelvis-rooted rig"), Report.Deviations[0].BoneName, FName(TEXT("Spine")));
 	}
 
-	// A moving pelvis must not disturb the result, or the notification re-fires forever.
+	// A moving pelvis must not change the report signature.
 	const TArray<FVector> LaterFrame = { Along(43.0), Along(40.0), Along(40.0), Along(6.2), Along(20.0) };
 	TestEqual(TEXT("Signature is stable while the pelvis moves"),
 		FMOVINSkeletonDiagnostics::BuildReportSignature(TEXT("MOVINman_V3_Puppet_UE"),
@@ -405,8 +405,7 @@ bool FMOVINSkeletonReportSignatureTest::RunTest(const FString& Parameters)
 	};
 
 	// The pelvis translation is world movement, so it differs on every frame of a performance.
-	// The notification must not treat that as a recalibration - this is what stopped the message
-	// re-appearing every couple of seconds.
+	// Movement must not be treated as a recalibration and produce duplicate logs.
 	const TArray<FVector> Frame1 = { Along(0.0), Along(95.0), Along(6.2), Along(20.0), Along(16.3) };
 	const TArray<FVector> Frame2 = { Along(0.0), Along(238.0), Along(6.2), Along(20.0), Along(16.3) };
 	TestEqual(TEXT("A moving pelvis does not change the signature"), SignatureFor(Frame2), SignatureFor(Frame1));
@@ -424,13 +423,11 @@ bool FMOVINSkeletonReportSignatureTest::RunTest(const FString& Parameters)
 		FMOVINSkeletonDiagnostics::CompareBoneLengths(RefBones, StreamedNames, Frame1, PelvisExclusion()));
 	TestNotEqual(TEXT("A different mesh changes the signature"), OtherMesh, SignatureFor(Frame1));
 
-	// Two meshes bound to the same subject must be tracked separately. Holding one signature per
-	// subject made the two flip-flop and re-raise the notification on every scan, which is what
-	// made the message keep coming back.
-	TMap<FString, FString> NotifiedPerMesh;
-	auto WouldNotify = [&NotifiedPerMesh](const FString& MeshName, const FString& Signature)
+	// Track reports per mesh so a subject driving multiple meshes does not repeat logs.
+	TMap<FString, FString> logged_per_mesh;
+	auto would_log = [&logged_per_mesh](const FString& MeshName, const FString& Signature)
 	{
-		FString& Stored = NotifiedPerMesh.FindOrAdd(MeshName);
+		FString& Stored = logged_per_mesh.FindOrAdd(MeshName);
 		if (Stored == Signature)
 		{
 			return false;
@@ -439,12 +436,12 @@ bool FMOVINSkeletonReportSignatureTest::RunTest(const FString& Parameters)
 		return true;
 	};
 
-	TestTrue(TEXT("First mesh notifies"), WouldNotify(TEXT("MOVINman_V3_Puppet_UE"), SignatureFor(Frame1)));
-	TestTrue(TEXT("Second mesh notifies"), WouldNotify(TEXT("Ch14_Body"), OtherMesh));
+	TestTrue(TEXT("First mesh logs"), would_log(TEXT("MOVINman_V3_Puppet_UE"), SignatureFor(Frame1)));
+	TestTrue(TEXT("Second mesh logs"), would_log(TEXT("Ch14_Body"), OtherMesh));
 	for (int32 Scan = 0; Scan < 5; ++Scan)
 	{
-		TestFalse(TEXT("First mesh stays quiet on rescan"), WouldNotify(TEXT("MOVINman_V3_Puppet_UE"), SignatureFor(Frame2)));
-		TestFalse(TEXT("Second mesh stays quiet on rescan"), WouldNotify(TEXT("Ch14_Body"), OtherMesh));
+		TestFalse(TEXT("First mesh stays quiet on rescan"), would_log(TEXT("MOVINman_V3_Puppet_UE"), SignatureFor(Frame2)));
+		TestFalse(TEXT("Second mesh stays quiet on rescan"), would_log(TEXT("Ch14_Body"), OtherMesh));
 	}
 
 	return true;
@@ -456,7 +453,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMOVINSkeletonActorSubjectOnlyTest, "MOVIN.Skel
 bool FMOVINSkeletonActorSubjectOnlyTest::RunTest(const FString& Parameters)
 {
 	// Only Actor streams carry a calibration offset. Character streams are named after the loaded
-	// character and are already retargeted, so they must never raise the notification.
+	// character and are already retargeted, so they do not need calibration reports.
 	TestTrue(TEXT("Actor subject is diagnosed"), FMOVINSkeletonDiagnostics::IsActorSubject(FName(TEXT("MOVINMan"))));
 	TestTrue(TEXT("Subject matching ignores case"), FMOVINSkeletonDiagnostics::IsActorSubject(FName(TEXT("MOVINman"))));
 	TestFalse(TEXT("Character subject is ignored"), FMOVINSkeletonDiagnostics::IsActorSubject(FName(TEXT("Ch14_nonPBR"))));
@@ -505,6 +502,85 @@ bool FMOVINSkeletonWorldMotionThresholdTest::RunTest(const FString& Parameters)
 		FMOVINSkeletonDiagnostics::IsWorldMotionBone(1000, FMOVINSkeletonDiagnostics::MinFramesForMotionCheck - 1));
 
 	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMOVINCalibrationSourceTest, "MOVIN.SkeletonDiagnostics.SourceLifecycle",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FMOVINCalibrationSourceTest::RunTest(const FString& Parameters) {
+    const auto a = FGuid::NewGuid(), b = FGuid::NewGuid();
+    TArray<FMOVINJointData> bones; bones.SetNum(2);
+    bones[0].BoneName = TEXT("Hips"); bones[1].BoneName = TEXT("Chest");
+    bones[1].LocalPosition = FVector(0, 0, 10);
+    auto stream = [&](const FGuid& source) {
+        for (int32 i = 0; i < 60; ++i) {
+            bones[0].LocalPosition = FVector(i, 0, 0);
+            FMOVINSkeletonDiagnostics::NoteSkeleton(source, TEXT("MOVINMan"), bones);
+        }
+    };
+    stream(a);
+    FMOVINStreamedSkeleton first, second;
+    TestTrue(TEXT("Initial calibration"), FMOVINSkeletonDiagnostics::GetStreamedSkeleton(TEXT("MOVINMan"), first));
+    FMOVINSkeletonDiagnostics::NoteSkeleton(b, TEXT("MOVINMan"), bones);
+    TestFalse(TEXT("Source switch needs new motion observation"), FMOVINSkeletonDiagnostics::GetStreamedSkeleton(TEXT("MOVINMan"), second));
+    stream(b);
+    TestTrue(TEXT("New source calibrates"), FMOVINSkeletonDiagnostics::GetStreamedSkeleton(TEXT("MOVINMan"), second));
+    TestTrue(TEXT("Revision cannot reuse stale fitted mesh"), second.CalibrationRevision > first.CalibrationRevision);
+    FMOVINSkeletonDiagnostics::forget_source(a);
+    TestTrue(TEXT("Old source cannot remove new calibration"), FMOVINSkeletonDiagnostics::GetStreamedSkeleton(TEXT("MOVINMan"), second));
+    FMOVINSkeletonDiagnostics::forget_source(b);
+    TestFalse(TEXT("Stopped source clears calibration"), FMOVINSkeletonDiagnostics::GetStreamedSkeleton(TEXT("MOVINMan"), second));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMOVINWorldMotionIdleTest, "MOVIN.SkeletonDiagnostics.WorldMotionPersistsWhileIdle",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FMOVINWorldMotionIdleTest::RunTest(const FString& Parameters) {
+    const auto source = FGuid::NewGuid();
+    TArray<FMOVINJointData> bones;
+    bones.SetNum(2);
+    bones[0].BoneName = TEXT("Hips");
+    bones[1].BoneName = TEXT("Chest");
+    bones[1].LocalPosition = FVector(0, 0, 10);
+    FMOVINStreamedSkeleton first, idle, moved, recalibrated;
+
+    for (int32 i = 0; i < 60; ++i) {
+        bones[0].LocalPosition = FVector(0, 0, 90 + i);
+        FMOVINSkeletonDiagnostics::NoteSkeleton(source, TEXT("MOVINMan"), bones);
+    }
+    TestTrue(TEXT("Moving actor establishes calibration"), FMOVINSkeletonDiagnostics::GetStreamedSkeleton(TEXT("MOVINMan"), first));
+
+    // Standing still must not turn a previously identified pelvis into a bone length.
+    for (int32 i = 0; i < 1200; ++i) {
+        FMOVINSkeletonDiagnostics::NoteSkeleton(source, TEXT("MOVINMan"), bones);
+    }
+    TestTrue(TEXT("Calibration remains usable while standing still"), FMOVINSkeletonDiagnostics::GetStreamedSkeleton(TEXT("MOVINMan"), idle));
+    TestTrue(TEXT("Pelvis stays excluded"), idle.WorldMotionBones.Contains(TEXT("Hips")));
+    TestEqual(TEXT("Standing still does not recalibrate"), idle.CalibrationRevision, first.CalibrationRevision);
+
+    bones[0].LocalPosition = FVector(0, 0, 80);
+    FMOVINSkeletonDiagnostics::NoteSkeleton(source, TEXT("MOVINMan"), bones);
+    TestTrue(TEXT("Movement after idle remains usable"), FMOVINSkeletonDiagnostics::GetStreamedSkeleton(TEXT("MOVINMan"), moved));
+    TestEqual(TEXT("Pelvis movement does not recalibrate"), moved.CalibrationRevision, first.CalibrationRevision);
+
+    const TArray<FMOVINRefPoseBone> ref = {
+        { TEXT("Hips"), FVector(0, 0, 100), INDEX_NONE },
+        { TEXT("Chest"), FVector(0, 0, 10), 0 }
+    };
+    const auto report = FMOVINSkeletonDiagnostics::CompareBoneLengths(ref, moved.BoneNames, moved.LocalTranslations, moved.WorldMotionBones);
+    TestFalse(TEXT("Moving pelvis produces no calibration warning"), report.HasDeviation());
+
+    bones[1].LocalPosition = FVector(0, 0, 12);
+    FMOVINSkeletonDiagnostics::NoteSkeleton(source, TEXT("MOVINMan"), bones);
+    TestTrue(TEXT("Recalibrated skeleton remains usable"), FMOVINSkeletonDiagnostics::GetStreamedSkeleton(TEXT("MOVINMan"), recalibrated));
+    TestTrue(TEXT("Real bone length change advances revision"), recalibrated.CalibrationRevision > first.CalibrationRevision);
+    TestFalse(TEXT("Recalibrated chest is still a bone length"), recalibrated.WorldMotionBones.Contains(TEXT("Chest")));
+
+    bones[0].BoneName = TEXT("Root");
+    FMOVINSkeletonDiagnostics::NoteSkeleton(source, TEXT("MOVINMan"), bones);
+    TestFalse(TEXT("Different skeleton requires fresh observation"), FMOVINSkeletonDiagnostics::GetStreamedSkeleton(TEXT("MOVINMan"), moved));
+    TestEqual(TEXT("Different skeleton clears learned world motion"), moved.WorldMotionBones.Num(), 0);
+    FMOVINSkeletonDiagnostics::forget_source(source);
+    return true;
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS

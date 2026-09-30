@@ -1,6 +1,8 @@
+#if MOVIN_STREAM_VALIDATION
 // Copyright 2025 MOVIN. All Rights Reserved.
 
 #include "MOVINStreamValidation.h"
+#include "MOVINLiveLinkModule.h"
 #include "MOVINValidationProtocol.h"
 
 #include "HAL/FileManager.h"
@@ -67,7 +69,7 @@ void FMOVINStreamValidation::WriteRawPacket(const TArray<uint8>& RawData)
 void FMOVINStreamValidation::BeginSession(const FString& InSessionId, const FString& InDirectory)
 {
 	FScopeLock Lock(&CriticalSection);
-	const FString Directory = InDirectory.IsEmpty() ? GetDefaultLogDirectory() : InDirectory;
+	const FString Directory = GetDefaultLogDirectory();
 	if (InSessionId.IsEmpty() || Directory.IsEmpty())
 	{
 		return;
@@ -190,13 +192,18 @@ bool FMOVINStreamValidation::TryAttachToLatestAppFileLocked()
 
 bool FMOVINStreamValidation::OpenSessionLocked(const FString& InSessionId, const FString& InDirectory)
 {
+	if (InSessionId.IsEmpty() || InSessionId.Len() > 64 || !InSessionId.GetCharArray().FilterByPredicate([](TCHAR c) { return c != 0 && !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-'); }).IsEmpty()) {
+        UE_LOG(LogMOVINLiveLink, Warning, TEXT("Invalid validation session name"));
+        return false;
+    }
 	CloseLocked();
 
 	IFileManager::Get().MakeDirectory(*InDirectory, true);
 	const FString RawPath = FPaths::Combine(InDirectory, FString::Printf(TEXT("%s%s"), *InSessionId, PluginSuffix));
-	PacketWriter.Reset(IFileManager::Get().CreateFileWriter(*RawPath, FILEWRITE_AllowRead));
+	PacketWriter.Reset(IFileManager::Get().CreateFileWriter(*RawPath, FILEWRITE_AllowRead | FILEWRITE_NoReplaceExisting));
 	if (!PacketWriter)
 	{
+		UE_LOG(LogMOVINLiveLink, Warning, TEXT("Cannot create validation log: %s"), *RawPath);
 		SessionId.Empty();
 		LogDirectory.Empty();
 		LogPath.Empty();
@@ -256,3 +263,5 @@ void FMOVINStreamValidation::FlushLocked()
 	LinesSinceFlush = 0;
 	LastFlushUtc = FDateTime::UtcNow();
 }
+
+#endif

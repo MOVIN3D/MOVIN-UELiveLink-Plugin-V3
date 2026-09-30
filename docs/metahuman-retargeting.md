@@ -16,7 +16,7 @@ retargeting comes out correct. Every step below is one of those three things.
 |---|---|
 | Engine | Unreal Engine 5.3 - 5.8, Windows 64-bit |
 | Capture | MOVIN Studio v3.0.0+ streaming an **Actor** |
-| Plugin | MOVINLiveLink v3.0.0 (formerly v1.1.0) or newer, with **LiveLink** enabled |
+| Plugin | MOVINLiveLink v3.0.0 or newer, with **LiveLink** enabled; use v3.3.0 with Studio v3.3.0+ |
 | Character | A MetaHuman already imported into the project |
 | Source mesh | `MOVINman_V3_Puppet_UE.fbx`, shipped with the plugin |
 | Network | MOVIN Studio and Unreal on the same network |
@@ -50,7 +50,7 @@ port to match.
 Start streaming. A subject appears in the LiveLink panel - usually `MOVINMan` for an Actor stream.
 **Write the name down**; the next step needs it exactly.
 
-The source status column reports the receive rate. Expected is `60 fps`; below `55` shows as a
+The source status column reports the receive rate. Expected is `60 fps`; below `57` shows as a
 warning and below `50` as critical.
 
 > If no subject appears, stop here. Check the UDP port through your firewall, the **Streaming Host**
@@ -81,12 +81,8 @@ lengths that belong to the actor rather than to the MOVINman mesh. Those lengths
 verbatim, which is what keeps the motion data intact, but joints whose calibrated length differs from
 the mesh visibly change shape.
 
-The plugin reports the actual figures in an editor notification and in the Output Log:
-
-```
-Skeleton Calibration Offset - 'MOVINMan'
-Neck1 0.44x, LeftFoot 0.79x, LeftLeg 0.79x, Neck 1.21x, ...
-```
+Bone-length differences are recorded in the Output Log as `[Skeleton Calibration Offset]`.
+No editor popup is shown for these expected differences.
 
 This matters for retargeting because an IK Retargeter measures how far a limb is extended, and how
 high the pelvis sits, **against the reference pose of the source mesh**. An actor whose legs

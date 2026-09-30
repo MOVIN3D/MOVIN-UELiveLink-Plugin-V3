@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 3,
-	"VersionName": "3.0.0",
+	"Version": 4,
+	"VersionName": "3.3.0",
 	"FriendlyName": "MOVIN LiveLink",
 	"Description": "Receives real-time motion capture data from MOVIN Studio via UDP and feeds it into Unreal Engine's LiveLink system.",
 	"Category": "Animation",

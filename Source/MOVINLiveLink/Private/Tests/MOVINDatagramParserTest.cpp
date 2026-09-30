@@ -176,7 +176,7 @@ bool FMOVINDatagramCoordinateConversionTest::RunTest(const FString& Parameters)
 	{
 		const FMOVINJointData& Joint = Datagram.Bones[0];
 		TestTrue(TEXT("Position axis swap (z,x,y)"), Joint.LocalPosition.Equals(FVector(3.f, 1.f, 2.f), 1e-4f));
-		TestTrue(TEXT("Rotation axis swap (z,x,y,w)"), Joint.LocalRotation.Equals(FQuat(0.3f, 0.1f, 0.2f, 0.4f), 1e-4f));
+		TestTrue(TEXT("Rotation axis swap (z,x,y,w)"), Joint.LocalRotation.Equals(FQuat(0.3f, 0.1f, 0.2f, 0.4f).GetNormalized(), 1e-4f));
 		TestTrue(TEXT("Scale axis swap (z,x,y)"), Joint.LocalScale.Equals(FVector(7.f, 5.f, 6.f), 1e-4f));
 	}
 
@@ -267,6 +267,7 @@ bool FMOVINDatagramBoneCountLimitsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+#if MOVIN_STREAM_VALIDATION
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMOVINDatagramControlPacketTest, "MOVIN.Datagram.ValidationControlPacket",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
@@ -316,6 +317,8 @@ bool FMOVINDatagramControlPacketTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+#endif
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMOVINDatagramMultiByteStringLengthTest, "MOVIN.Datagram.MultiByteStringLength",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
@@ -338,6 +341,48 @@ bool FMOVINDatagramMultiByteStringLengthTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Subject name length"), Datagram.SubjectName.Len(), 200);
 
 	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMOVINDatagramBoundaryTest, "MOVIN.Datagram.BoundariesAndNames",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FMOVINDatagramBoundaryTest::RunTest(const FString& Parameters) {
+    using namespace MOVINDatagramTestHelpers;
+    const auto bone = MakeBone(TEXT("Hip_한글"), 1, 2, 3, 0, 0, 0, 1, 1, 1, 1);
+    auto packet = BuildMotionPacket(TEXT("Actor_骨"), 42, {bone});
+    FMOVINDatagram parsed;
+    TestTrue(TEXT("UTF-8 names"), FMOVINDatagramParser::Parse(packet, parsed));
+    TestEqual(TEXT("Wire name survives FName interning"), parsed.Bones[0].wire_name, FString(TEXT("Hip_한글")));
+    for (int32 length = 0; length < packet.Num(); ++length) {
+        TArray<uint8> truncated(packet.GetData(), length);
+        TestFalse(TEXT("Every truncation rejected"), FMOVINDatagramParser::Parse(truncated, parsed));
+    }
+    auto bad = packet;
+    bad.Add(0);
+    TestFalse(TEXT("Trailing bytes rejected"), FMOVINDatagramParser::Parse(bad, parsed));
+    bad = packet; bad[0] = 1;
+    TestFalse(TEXT("Short envelope rejected"), FMOVINDatagramParser::Parse(bad, parsed));
+    bad = packet; bad[0] = 0xff; bad[1] = 0xff; bad[2] = 0xff; bad[3] = 0x7f;
+    TestFalse(TEXT("Envelope overflow rejected"), FMOVINDatagramParser::Parse(bad, parsed));
+    bad = packet; for (int32 i = 4; i < 9; ++i) { bad[i] = 0xff; }
+    TestFalse(TEXT("String length overflow rejected"), FMOVINDatagramParser::Parse(bad, parsed));
+    bad = packet; bad[5] = 0xff;
+    TestFalse(TEXT("Malformed UTF-8 rejected"), FMOVINDatagramParser::Parse(bad, parsed));
+    TestFalse(TEXT("Empty subject"), FMOVINDatagramParser::Parse(BuildMotionPacket(TEXT(""), 1, {bone}), parsed));
+    TestFalse(TEXT("Empty frame"), FMOVINDatagramParser::Parse(BuildMotionPacket(TEXT("Actor"), 1, {}), parsed));
+    auto other = bone; other.Name = TEXT("");
+    TestFalse(TEXT("Empty bone"), FMOVINDatagramParser::Parse(BuildMotionPacket(TEXT("Actor"), 1, {other}), parsed));
+    other.Name = TEXT("hip_한글");
+    TestFalse(TEXT("FName case collision"), FMOVINDatagramParser::Parse(BuildMotionPacket(TEXT("Actor"), 1, {bone, other}), parsed));
+    other = bone; other.Rot[3] = 0;
+    TestFalse(TEXT("Zero quaternion"), FMOVINDatagramParser::Parse(BuildMotionPacket(TEXT("Actor"), 1, {other}), parsed));
+    other = bone; uint32 nan = 0x7fc00000; FMemory::Memcpy(&other.Pos[0], &nan, 4);
+    TestFalse(TEXT("NaN position"), FMOVINDatagramParser::Parse(BuildMotionPacket(TEXT("Actor"), 1, {other}), parsed));
+    other = bone; uint32 infinity = 0x7f800000; FMemory::Memcpy(&other.Scale[1], &infinity, 4);
+    TestFalse(TEXT("Infinite scale"), FMOVINDatagramParser::Parse(BuildMotionPacket(TEXT("Actor"), 1, {other}), parsed));
+#if !MOVIN_STREAM_VALIDATION
+    TestFalse(TEXT("Validation disabled"), FMOVINDatagramParser::Parse(BuildControlPacket(MOVINValidationProtocol::BeginSessionFrame, TEXT("safe"), TEXT("unreal_livelink"), 10, TEXT("C:/remote")), parsed));
+#endif
+    return true;
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS
