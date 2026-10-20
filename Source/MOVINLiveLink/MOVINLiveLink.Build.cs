@@ -33,6 +33,10 @@ public class MOVINLiveLink : ModuleRules
 			}
 		);
 
+		if (Target.bBuildEditor) {
+			PrivateDependencyModuleNames.Add("PropertyEditor");
+		}
+
 		PrecompileForTargets = PrecompileTargetsType.Any;
 	}
 }

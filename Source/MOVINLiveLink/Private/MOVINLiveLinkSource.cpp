@@ -1,6 +1,7 @@
 // Copyright 2025 MOVIN. All Rights Reserved.
 
 #include "MOVINLiveLinkSource.h"
+#include "MOVINLiveLinkSourceSettings.h"
 #include "MOVINLiveLinkModule.h"
 #include "MOVINActorMesh.h"
 #include "MOVINSkeletonDiagnostics.h"
@@ -14,6 +15,7 @@
 #include "ILiveLinkClient.h"
 #include "Roles/LiveLinkAnimationRole.h"
 #include "Templates/Atomic.h"
+#include "UObject/UnrealType.h"
 
 #define LOCTEXT_NAMESPACE "MOVINLiveLinkSource"
 
@@ -130,7 +132,24 @@ void FMOVINLiveLinkSource::ReceiveClient(ILiveLinkClient* InClient, FGuid InSour
 	SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
 	SetSourceStatus(FText::Format(LOCTEXT("SourceStatus_Listening", "Listening on port {0}"), FText::AsNumber(Port)));
 
-	StartThread();
+}
+
+TSubclassOf<ULiveLinkSourceSettings> FMOVINLiveLinkSource::GetSettingsClass() const {
+	return UMOVINLiveLinkSourceSettings::StaticClass();
+}
+
+void FMOVINLiveLinkSource::InitializeSettings(ULiveLinkSourceSettings* settings) {
+	OnSettingsChanged(settings, FPropertyChangedEvent(nullptr));
+	// Preset settings must be applied before the receiver publishes its first frame.
+	if (bPortRegistered && Socket != nullptr && Thread == nullptr && !bStopping) {
+		StartThread();
+	}
+}
+
+void FMOVINLiveLinkSource::OnSettingsChanged(ULiveLinkSourceSettings* settings, const FPropertyChangedEvent& event) {
+	const auto rotation = CastChecked<UMOVINLiveLinkSourceSettings>(settings)->global_rotation_offset.Quaternion();
+	FScopeLock lock(&CriticalSection);
+	rotation_offset = rotation;
 }
 
 bool FMOVINLiveLinkSource::IsSourceStillValid() const
@@ -584,12 +603,22 @@ void FMOVINLiveLinkSource::ProcessReceivedData(const TArray<uint8>& RawData, con
 	TArray<FTransform>& Transforms = AnimFrameData.Transforms;
 	Transforms.Reserve(Datagram.Bones.Num());
 
-	for (const FMOVINJointData& Bone : Datagram.Bones)
+	FQuat rotation;
 	{
+		FScopeLock lock(&CriticalSection);
+		rotation = rotation_offset;
+	}
+	// Rotate before the top-level bone's existing basis; descendants stay in their local spaces.
+	for (auto i = 0; i < Datagram.Bones.Num(); ++i) {
+		const auto& Bone = Datagram.Bones[i];
 		FTransform Transform;
 		Transform.SetLocation(Bone.LocalPosition);
 		Transform.SetRotation(Bone.LocalRotation);
 		Transform.SetScale3D(Bone.LocalScale);
+		if (i == 0) {
+			Transform.SetLocation(rotation.RotateVector(Bone.LocalPosition));
+			Transform.SetRotation((rotation * Bone.LocalRotation).GetNormalized());
+		}
 		Transforms.Add(Transform);
 	}
 

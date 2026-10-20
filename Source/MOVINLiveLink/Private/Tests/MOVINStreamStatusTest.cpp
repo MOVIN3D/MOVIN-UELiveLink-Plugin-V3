@@ -1,6 +1,8 @@
 #if WITH_DEV_AUTOMATION_TESTS
 #include "MOVINStreamStatus.h"
 #include "MOVINLiveLinkSource.h"
+#include "MOVINLiveLinkSourceFactory.h"
+#include "MOVINLiveLinkSourceSettings.h"
 #include "Misc/AutomationTest.h"
 #include "Features/IModularFeatures.h"
 #include "ILiveLinkClient.h"
@@ -11,6 +13,8 @@
 #include "Misc/FileHelper.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
+#include "UObject/Package.h"
+#include "UObject/UnrealType.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMOVINFrameOrderTest, "MOVIN.Stream.FrameOrder",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
@@ -190,4 +194,156 @@ bool FMOVINSourceLifecycleTest::RunTest(const FString& Parameters) {
     }
     return true;
 }
+
+#if WITH_EDITOR
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMOVINGlobalRotationTest, "MOVIN.Stream.GlobalRotationOffset",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FMOVINGlobalRotationTest::RunTest(const FString& Parameters) {
+    auto* subsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+    auto* probe = FUdpSocketBuilder(TEXT("MOVINRotationPort")).BoundToEndpoint(FIPv4Endpoint(FIPv4Address::InternalLoopback, 0)).Build();
+    auto endpoint = subsystem->CreateInternetAddr();
+    probe->GetAddress(*endpoint);
+    const auto port = endpoint->GetPort();
+    probe->Close(); subsystem->DestroySocket(probe);
+    auto* socket = FUdpSocketBuilder(TEXT("MOVINRotationSender")).BoundToEndpoint(FIPv4Endpoint(FIPv4Address::InternalLoopback, 0)).Build();
+    auto& client = IModularFeatures::Get().GetModularFeature<ILiveLinkClient>(ILiveLinkClient::ModularFeatureName);
+    TSharedPtr<FMOVINLiveLinkSource> source = MakeShared<FMOVINLiveLinkSource>(port);
+    const auto id = client.AddSource(source);
+    auto* settings = CastChecked<UMOVINLiveLinkSourceSettings>(client.GetSourceSettings(id));
+    settings->Mode = ELiveLinkSourceMode::Latest;
+    settings->Factory = UMOVINLiveLinkSourceFactory::StaticClass();
+    settings->ConnectionString = FString::Printf(TEXT("Port=%d"), port);
+    TestTrue(TEXT("Existing sources default to zero offset"), settings->global_rotation_offset.IsZero());
+
+    const auto position = FVector(130, -70, 95);
+    const auto orientation = FRotator(23, -37, 11).Quaternion();
+    const auto child = FTransform(FRotator(-13, 21, 9), FVector(4, 8, 17), FVector(1, 1, 1));
+    const auto scale = FVector(1.2, 1.2, 1.2);
+    // Studio's default (Unity Euler 0, -90, -90), after the parser's axis permutation.
+    // Its local Z points along Unreal X, so rotating Hips locally cannot implement global yaw.
+    const auto basis = FTransform(FQuat(-.5, .5, -.5, .5), FVector(17, -23, 9));
+    TestTrue(TEXT("Fixture reproduces the reported axis mismatch"), basis.GetRotation().RotateVector(FVector::UpVector).Equals(FVector::ForwardVector, .001));
+    auto frame = 0;
+    auto synthetic = true;
+    auto send = [&](const FGuid& key, bool actor, const FVector& location, const FQuat& rotation) {
+        TArray<uint8> bytes;
+        auto integer = [&](int32 value) { bytes.Append(reinterpret_cast<const uint8*>(&value), sizeof(value)); };
+        auto number = [&](float value) { bytes.Append(reinterpret_cast<const uint8*>(&value), sizeof(value)); };
+        auto text = [&](const ANSICHAR* value) {
+            bytes.Add(uint8(FCStringAnsi::Strlen(value)));
+            bytes.Append(reinterpret_cast<const uint8*>(value), FCStringAnsi::Strlen(value));
+        };
+        integer(0); text(actor ? "MOVINMan" : "RotationTest"); integer(frame++); integer(actor && synthetic ? 3 : 2);
+        if (actor && synthetic) {
+            text("RootBone");
+            const auto p = basis.GetLocation();
+            const auto q = basis.GetRotation();
+            number(p.Y); number(p.Z); number(p.X);
+            number(q.Y); number(q.Z); number(q.X); number(q.W);
+            number(1); number(1); number(1);
+        }
+        text(actor ? "Hips" : "Root");
+        // Undo the parser's Unity -> Unreal axis permutation to test the full receive path.
+        number(location.Y); number(location.Z); number(location.X);
+        number(orientation.Y); number(orientation.Z); number(orientation.X); number(orientation.W);
+        number(scale.Y); number(scale.Z); number(scale.X);
+        text("Spine");
+        const auto p = child.GetLocation();
+        const auto q = child.GetRotation();
+        number(p.Y); number(p.Z); number(p.X);
+        number(q.Y); number(q.Z); number(q.X); number(q.W);
+        number(1); number(1); number(1);
+        auto size = bytes.Num() - 4;
+        FMemory::Memcpy(bytes.GetData(), &size, sizeof(size));
+        int32 sent = 0;
+        TestTrue(TEXT("Motion packet sent"), socket->SendTo(bytes.GetData(), bytes.Num(), sent, *endpoint));
+        TestEqual(TEXT("Complete UDP frame sent"), sent, bytes.Num());
+        FPlatformProcess::Sleep(.03f);
+        client.ForceTick();
+        FLiveLinkSubjectFrameData evaluated;
+        if (client.EvaluateFrameFromSource_AnyThread(FLiveLinkSubjectKey(key, FName(actor ? TEXT("MOVINMan") : TEXT("RotationTest"))), ULiveLinkAnimationRole::StaticClass(), evaluated)) {
+            const auto& transforms = evaluated.FrameData.Cast<FLiveLinkAnimationFrameData>()->Transforms;
+            const auto original = actor && synthetic ? basis : FTransform(orientation, location, scale);
+            const auto local = actor && synthetic ? FTransform(orientation, location, scale) : child;
+            TestTrue(TEXT("Travel path rotates about the stream origin"), transforms[0].GetLocation().Equals(rotation.RotateVector(original.GetLocation()), .001));
+            TestTrue(TEXT("Global rotation precedes the original root orientation"), transforms[0].GetRotation().Equals(rotation * original.GetRotation(), .001));
+            TestTrue(TEXT("Root scale is preserved"), transforms[0].GetScale3D().Equals(original.GetScale3D(), .001));
+            TestTrue(TEXT("Child local pose is unchanged"), transforms[1].Equals(local, .001));
+            const auto expected = rotation.RotateVector(original.TransformPosition(local.GetLocation()));
+            TestTrue(TEXT("Child follows the rotated root exactly once"), transforms[0].TransformPosition(transforms[1].GetLocation()).Equals(expected, .001));
+            if (actor && synthetic) {
+                TestTrue(TEXT("Grandchild local pose is unchanged"), transforms[2].Equals(child, .001));
+                const auto expected_tip = rotation.RotateVector(original.TransformPosition(local.TransformPosition(child.GetLocation())));
+                const auto tip = transforms[0].TransformPosition(transforms[1].TransformPosition(transforms[2].GetLocation()));
+                TestTrue(TEXT("Entire chain follows global axes despite the imported root basis"), tip.Equals(expected_tip, .001));
+                const auto actual = transforms[0].GetRotation() * transforms[1].GetRotation();
+                TestTrue(TEXT("Entire chain rotates in component space"), actual.Equals(rotation * original.GetRotation() * local.GetRotation(), .001));
+            }
+        }
+        return evaluated.FrameData.IsValid();
+    };
+
+    // First packet registers the skeleton; the next packet is the first published frame.
+    send(id, false, position, FQuat::Identity);
+    TestTrue(TEXT("Zero offset frame evaluated"), send(id, false, position, FQuat::Identity));
+    auto* property = FindFProperty<FProperty>(UMOVINLiveLinkSourceSettings::StaticClass(), GET_MEMBER_NAME_CHECKED(UMOVINLiveLinkSourceSettings, global_rotation_offset));
+    auto event = FPropertyChangedEvent(property);
+    // Use explicit axis-angle expectations, independently of FRotator's constructor order.
+    settings->global_rotation_offset = FRotator::ZeroRotator;
+    settings->global_rotation_offset.Yaw = 90;
+    source->OnSettingsChanged(settings, event);
+    TestTrue(TEXT("Z / Yaw turns about Unreal Up"), send(id, false, position, FQuat(FVector::UpVector, PI / 2)));
+    settings->global_rotation_offset = FRotator::ZeroRotator;
+    settings->global_rotation_offset.Pitch = 90;
+    source->OnSettingsChanged(settings, event);
+    TestTrue(TEXT("Y / Pitch turns about Unreal Right"), send(id, false, position, FQuat(FVector::RightVector, -PI / 2)));
+    settings->global_rotation_offset = FRotator::ZeroRotator;
+    settings->global_rotation_offset.Roll = 90;
+    source->OnSettingsChanged(settings, event);
+    TestTrue(TEXT("X / Roll turns about Unreal Forward"), send(id, false, position, FQuat(FVector::ForwardVector, -PI / 2)));
+    for (const auto offset : {FRotator(0, 90, 0), FRotator(90, 0, 0), FRotator(0, 0, 90), FRotator(31, -68, 17), FRotator::ZeroRotator}) {
+        settings->global_rotation_offset = offset;
+        source->OnSettingsChanged(settings, event);
+        TestTrue(TEXT("Offset edits apply without reconnecting"), send(id, false, position, offset.Quaternion()));
+        TestTrue(TEXT("Next motion frame is not rotated cumulatively"), send(id, false, position + FVector(30, 20, 10), offset.Quaternion()));
+    }
+    settings->global_rotation_offset = FRotator(31, -68, 17);
+    source->OnSettingsChanged(settings, event);
+    send(id, true, position, settings->global_rotation_offset.Quaternion());
+    TestTrue(TEXT("Actor with the imported root basis evaluates"), send(id, true, position, settings->global_rotation_offset.Quaternion()));
+    for (const auto offset : {FRotator(0, 90, 0), FRotator(90, 0, 0), FRotator(0, 0, 90), FRotator::ZeroRotator}) {
+        settings->global_rotation_offset = offset;
+        source->OnSettingsChanged(settings, event);
+        TestTrue(TEXT("Actor offset uses Unreal axes with a rotated parent"), send(id, true, position, offset.Quaternion()));
+    }
+    settings->global_rotation_offset = FRotator(31, -68, 17);
+    source->OnSettingsChanged(settings, event);
+    synthetic = false;
+    send(id, true, position, settings->global_rotation_offset.Quaternion());
+    TestTrue(TEXT("Actor without a synthetic root also rotates once"), send(id, true, position, settings->global_rotation_offset.Quaternion()));
+    auto preset = client.GetSourcePreset(id, GetTransientPackage());
+    TestTrue(TEXT("Preset captures the custom settings"), CastChecked<UMOVINLiveLinkSourceSettings>(preset.Settings)->global_rotation_offset.Equals(settings->global_rotation_offset));
+    client.RemoveSource(id); source->RequestSourceShutdown(); source.Reset(); client.ForceTick();
+    // A new guid avoids LiveLink's deferred removal; the same port must already be reusable.
+    preset.Guid = FGuid::NewGuid();
+    TestTrue(TEXT("Source recreates from its saved preset"), client.CreateSource(preset));
+    const auto restored = CastChecked<UMOVINLiveLinkSourceSettings>(client.GetSourceSettings(preset.Guid))->global_rotation_offset;
+    TestTrue(TEXT("Preset restores all three axes"), restored.Equals(FRotator(31, -68, 17)));
+    send(preset.Guid, false, position, restored.Quaternion());
+    TestTrue(TEXT("First published frame uses the restored offset"), send(preset.Guid, false, position, restored.Quaternion()));
+    client.RemoveSource(preset.Guid); client.ForceTick();
+    preset.Guid = FGuid::NewGuid();
+    preset.Settings = NewObject<ULiveLinkSourceSettings>();
+    preset.Settings->Factory = UMOVINLiveLinkSourceFactory::StaticClass();
+    preset.Settings->ConnectionString = FString::Printf(TEXT("Port=%d"), port);
+    preset.Settings->Mode = ELiveLinkSourceMode::Latest;
+    TestTrue(TEXT("Older presets still create a source"), client.CreateSource(preset));
+    TestTrue(TEXT("Older presets receive a zero offset"), CastChecked<UMOVINLiveLinkSourceSettings>(client.GetSourceSettings(preset.Guid))->global_rotation_offset.IsZero());
+    send(preset.Guid, false, position, FQuat::Identity);
+    TestTrue(TEXT("Older presets preserve the original motion"), send(preset.Guid, false, position, FQuat::Identity));
+    client.RemoveSource(preset.Guid); client.ForceTick();
+    socket->Close(); subsystem->DestroySocket(socket);
+    return true;
+}
+#endif
 #endif

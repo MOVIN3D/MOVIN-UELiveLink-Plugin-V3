@@ -37,6 +37,9 @@ public:
 
 	// ~Begin ILiveLinkSource interface
 	virtual void ReceiveClient(ILiveLinkClient* InClient, FGuid InSourceGuid) override;
+	virtual TSubclassOf<ULiveLinkSourceSettings> GetSettingsClass() const override;
+	virtual void InitializeSettings(ULiveLinkSourceSettings* settings) override;
+	virtual void OnSettingsChanged(ULiveLinkSourceSettings* settings, const FPropertyChangedEvent& event) override;
 	virtual bool IsSourceStillValid() const override;
 	virtual bool RequestSourceShutdown() override;
 	virtual FText GetSourceType() const override;
@@ -153,6 +156,8 @@ private:
 
 	/** Critical section for thread-safe access */
 	FCriticalSection CriticalSection;
+	/** Snapshot for the receiver thread; never read the settings UObject from that thread. */
+	FQuat rotation_offset = FQuat::Identity;
 	TArray<FMOVINJointData> pending_bones;
 	FName pending_subject;
 

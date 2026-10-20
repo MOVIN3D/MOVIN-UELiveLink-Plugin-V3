@@ -36,6 +36,8 @@ UnrealEditor-Cmd.exe HostProject.uproject /Engine/Maps/Entry -AssetGatherAll=fal
 
 The tests cover packet boundaries, Unicode, malformed values, frame ordering, port collisions,
 source recreation, UDP status, changing skeletons/subjects, LiveLink evaluation and calibration.
+Global rotation tests cover Unreal axes with rotated root hierarchies, descendant local poses,
+non-cumulative updates, live settings changes and current/older Live Link Presets.
 An optional `-MOVINStudioPacket=<file>` supplies a packet captured by the Studio sender test for
 cross-application verification. Run tests on the oldest and newest supported engine and build all
 versions before updating release assets. Studio's adjacent editor tests cover its sender/status UI.

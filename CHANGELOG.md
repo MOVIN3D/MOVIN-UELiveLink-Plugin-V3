@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.3.1 — 2026-10-20
+
+Recommended for MOVIN Studio v3.3.0 or later.
+
+- Add per-source Global Rotation Offset settings with explicit X/Roll, Y/Pitch and Z/Yaw inputs in Unreal degrees.
+- Rotate facing and the complete travel path about the stream origin, before the Skeletal Mesh component transform.
+- Apply the offset once at the top-level streamed bone, preserving the existing root basis and descendant local poses.
+- Support editing offsets while connected and saving/restoring them through Live Link Presets; older presets default to zero.
+- Add UDP/LiveLink regression coverage for each axis, rotated root hierarchies, preset restoration and non-cumulative frame updates.
+
 ## 3.3.0 — 2026-09-30
 
 Recommended for MOVIN Studio v3.3.0 or later. This release was prepared internally as v1.2.0;

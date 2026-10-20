@@ -1,4 +1,4 @@
-# MOVIN LiveLink Plugin v3.3.0 for UE5
+# MOVIN LiveLink Plugin v3.3.1 for UE5
 
 Stream motion from MOVIN Studio into Unreal Engine through LiveLink, using an Actor
 or a character loaded in Studio.
@@ -11,7 +11,7 @@ or a character loaded in Studio.
 
 | MOVIN Studio | Recommended plugin |
 |---|---|
-| v3.3.0 or later | [v3.3.0](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/v3.3.0) |
+| v3.3.0 or later | [v3.3.1](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/v3.3.1) |
 | v3.0.0–v3.2.0 | [v3.0.0](https://github.com/MOVIN3D/MOVIN-UELiveLink-Plugin-V3/releases/tag/v3.0.0) |
 
 Studio's connection status and LiveLink FPS display require Studio and plugin v3.3.0+.
@@ -43,6 +43,14 @@ new package for the same engine version. Keep only one copy of the plugin in the
    an Actor stream normally uses `MOVINMan`.
 
 ## Apply the Stream
+
+To align the entire motion with your scene, select the MOVIN source in Live Link
+and edit **MOVIN > Global Rotation Offset** in its source settings. Values are
+degrees in Unreal coordinates: **X (Roll), Y (Pitch), Z (Yaw)**. For example, Z = 90
+turns both facing and the travel path by 90 degrees about the stream origin,
+before the Skeletal Mesh component's own transform. X/Y also tilt the motion and
+its travel path. Changes apply to incoming frames without reconnecting. The
+default is zero on every axis; save a Live Link Preset to retain the offset.
 
 For an **Actor** stream, import the included `MOVINman_V3_Puppet_UE.fbx`.
 For a **Character** stream, import the exact same `.fbx` used in Studio.
