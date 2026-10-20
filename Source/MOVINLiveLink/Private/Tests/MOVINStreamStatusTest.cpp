@@ -225,7 +225,7 @@ bool FMOVINGlobalRotationTest::RunTest(const FString& Parameters) {
     TestTrue(TEXT("Fixture reproduces the reported axis mismatch"), basis.GetRotation().RotateVector(FVector::UpVector).Equals(FVector::ForwardVector, .001));
     auto frame = 0;
     auto synthetic = true;
-    auto send = [&](const FGuid& key, bool actor, const FVector& location, const FQuat& rotation) {
+    auto send = [&](const FGuid& key, bool actor, const FVector& location, const FQuat& rotation, bool evaluate) {
         TArray<uint8> bytes;
         auto integer = [&](int32 value) { bytes.Append(reinterpret_cast<const uint8*>(&value), sizeof(value)); };
         auto number = [&](float value) { bytes.Append(reinterpret_cast<const uint8*>(&value), sizeof(value)); };
@@ -261,7 +261,7 @@ bool FMOVINGlobalRotationTest::RunTest(const FString& Parameters) {
         FPlatformProcess::Sleep(.03f);
         client.ForceTick();
         FLiveLinkSubjectFrameData evaluated;
-        if (client.EvaluateFrameFromSource_AnyThread(FLiveLinkSubjectKey(key, FName(actor ? TEXT("MOVINMan") : TEXT("RotationTest"))), ULiveLinkAnimationRole::StaticClass(), evaluated)) {
+        if (evaluate && client.EvaluateFrameFromSource_AnyThread(FLiveLinkSubjectKey(key, FName(actor ? TEXT("MOVINMan") : TEXT("RotationTest"))), ULiveLinkAnimationRole::StaticClass(), evaluated)) {
             const auto& transforms = evaluated.FrameData.Cast<FLiveLinkAnimationFrameData>()->Transforms;
             const auto original = actor && synthetic ? basis : FTransform(orientation, location, scale);
             const auto local = actor && synthetic ? FTransform(orientation, location, scale) : child;
@@ -283,44 +283,45 @@ bool FMOVINGlobalRotationTest::RunTest(const FString& Parameters) {
         return evaluated.FrameData.IsValid();
     };
 
-    // First packet registers the skeleton; the next packet is the first published frame.
-    send(id, false, position, FQuat::Identity);
-    TestTrue(TEXT("Zero offset frame evaluated"), send(id, false, position, FQuat::Identity));
+    // Registration packets can still evaluate the previous layout in older LiveLink versions.
+    // Only inspect the following packet, which is the first published frame of the new layout.
+    send(id, false, position, FQuat::Identity, false);
+    TestTrue(TEXT("Zero offset frame evaluated"), send(id, false, position, FQuat::Identity, true));
     auto* property = FindFProperty<FProperty>(UMOVINLiveLinkSourceSettings::StaticClass(), GET_MEMBER_NAME_CHECKED(UMOVINLiveLinkSourceSettings, global_rotation_offset));
     auto event = FPropertyChangedEvent(property);
     // Use explicit axis-angle expectations, independently of FRotator's constructor order.
     settings->global_rotation_offset = FRotator::ZeroRotator;
     settings->global_rotation_offset.Yaw = 90;
     source->OnSettingsChanged(settings, event);
-    TestTrue(TEXT("Z / Yaw turns about Unreal Up"), send(id, false, position, FQuat(FVector::UpVector, PI / 2)));
+    TestTrue(TEXT("Z / Yaw turns about Unreal Up"), send(id, false, position, FQuat(FVector::UpVector, PI / 2), true));
     settings->global_rotation_offset = FRotator::ZeroRotator;
     settings->global_rotation_offset.Pitch = 90;
     source->OnSettingsChanged(settings, event);
-    TestTrue(TEXT("Y / Pitch turns about Unreal Right"), send(id, false, position, FQuat(FVector::RightVector, -PI / 2)));
+    TestTrue(TEXT("Y / Pitch turns about Unreal Right"), send(id, false, position, FQuat(FVector::RightVector, -PI / 2), true));
     settings->global_rotation_offset = FRotator::ZeroRotator;
     settings->global_rotation_offset.Roll = 90;
     source->OnSettingsChanged(settings, event);
-    TestTrue(TEXT("X / Roll turns about Unreal Forward"), send(id, false, position, FQuat(FVector::ForwardVector, -PI / 2)));
+    TestTrue(TEXT("X / Roll turns about Unreal Forward"), send(id, false, position, FQuat(FVector::ForwardVector, -PI / 2), true));
     for (const auto offset : {FRotator(0, 90, 0), FRotator(90, 0, 0), FRotator(0, 0, 90), FRotator(31, -68, 17), FRotator::ZeroRotator}) {
         settings->global_rotation_offset = offset;
         source->OnSettingsChanged(settings, event);
-        TestTrue(TEXT("Offset edits apply without reconnecting"), send(id, false, position, offset.Quaternion()));
-        TestTrue(TEXT("Next motion frame is not rotated cumulatively"), send(id, false, position + FVector(30, 20, 10), offset.Quaternion()));
+        TestTrue(TEXT("Offset edits apply without reconnecting"), send(id, false, position, offset.Quaternion(), true));
+        TestTrue(TEXT("Next motion frame is not rotated cumulatively"), send(id, false, position + FVector(30, 20, 10), offset.Quaternion(), true));
     }
     settings->global_rotation_offset = FRotator(31, -68, 17);
     source->OnSettingsChanged(settings, event);
-    send(id, true, position, settings->global_rotation_offset.Quaternion());
-    TestTrue(TEXT("Actor with the imported root basis evaluates"), send(id, true, position, settings->global_rotation_offset.Quaternion()));
+    send(id, true, position, settings->global_rotation_offset.Quaternion(), false);
+    TestTrue(TEXT("Actor with the imported root basis evaluates"), send(id, true, position, settings->global_rotation_offset.Quaternion(), true));
     for (const auto offset : {FRotator(0, 90, 0), FRotator(90, 0, 0), FRotator(0, 0, 90), FRotator::ZeroRotator}) {
         settings->global_rotation_offset = offset;
         source->OnSettingsChanged(settings, event);
-        TestTrue(TEXT("Actor offset uses Unreal axes with a rotated parent"), send(id, true, position, offset.Quaternion()));
+        TestTrue(TEXT("Actor offset uses Unreal axes with a rotated parent"), send(id, true, position, offset.Quaternion(), true));
     }
     settings->global_rotation_offset = FRotator(31, -68, 17);
     source->OnSettingsChanged(settings, event);
     synthetic = false;
-    send(id, true, position, settings->global_rotation_offset.Quaternion());
-    TestTrue(TEXT("Actor without a synthetic root also rotates once"), send(id, true, position, settings->global_rotation_offset.Quaternion()));
+    send(id, true, position, settings->global_rotation_offset.Quaternion(), false);
+    TestTrue(TEXT("Actor without a synthetic root also rotates once"), send(id, true, position, settings->global_rotation_offset.Quaternion(), true));
     auto preset = client.GetSourcePreset(id, GetTransientPackage());
     TestTrue(TEXT("Preset captures the custom settings"), CastChecked<UMOVINLiveLinkSourceSettings>(preset.Settings)->global_rotation_offset.Equals(settings->global_rotation_offset));
     client.RemoveSource(id); source->RequestSourceShutdown(); source.Reset(); client.ForceTick();
@@ -329,8 +330,8 @@ bool FMOVINGlobalRotationTest::RunTest(const FString& Parameters) {
     TestTrue(TEXT("Source recreates from its saved preset"), client.CreateSource(preset));
     const auto restored = CastChecked<UMOVINLiveLinkSourceSettings>(client.GetSourceSettings(preset.Guid))->global_rotation_offset;
     TestTrue(TEXT("Preset restores all three axes"), restored.Equals(FRotator(31, -68, 17)));
-    send(preset.Guid, false, position, restored.Quaternion());
-    TestTrue(TEXT("First published frame uses the restored offset"), send(preset.Guid, false, position, restored.Quaternion()));
+    send(preset.Guid, false, position, restored.Quaternion(), false);
+    TestTrue(TEXT("First published frame uses the restored offset"), send(preset.Guid, false, position, restored.Quaternion(), true));
     client.RemoveSource(preset.Guid); client.ForceTick();
     preset.Guid = FGuid::NewGuid();
     preset.Settings = NewObject<ULiveLinkSourceSettings>();
@@ -339,8 +340,8 @@ bool FMOVINGlobalRotationTest::RunTest(const FString& Parameters) {
     preset.Settings->Mode = ELiveLinkSourceMode::Latest;
     TestTrue(TEXT("Older presets still create a source"), client.CreateSource(preset));
     TestTrue(TEXT("Older presets receive a zero offset"), CastChecked<UMOVINLiveLinkSourceSettings>(client.GetSourceSettings(preset.Guid))->global_rotation_offset.IsZero());
-    send(preset.Guid, false, position, FQuat::Identity);
-    TestTrue(TEXT("Older presets preserve the original motion"), send(preset.Guid, false, position, FQuat::Identity));
+    send(preset.Guid, false, position, FQuat::Identity, false);
+    TestTrue(TEXT("Older presets preserve the original motion"), send(preset.Guid, false, position, FQuat::Identity, true));
     client.RemoveSource(preset.Guid); client.ForceTick();
     socket->Close(); subsystem->DestroySocket(socket);
     return true;
